@@ -23,12 +23,12 @@ Teste este programa mínimo no editor:
 
 ```lume
 fn main() -> i32 {
-  print("A resposta é ", 42);
+  print("Olá, Lume!");
   return 0;
 }
 ```
 
-O console do playground mostrará `A resposta é 42`.
+O console do playground mostrará `Olá, Lume!`.
 
 ## Como desenvolvedores podem usar o Lume
 

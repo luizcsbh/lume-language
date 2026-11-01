@@ -25,12 +25,12 @@ Try this minimal program in the editor:
 
 ```lume
 fn main() -> i32 {
-  print("The answer is ", 42);
+  print("Hello, Lume!");
   return 0;
 }
 ```
 
-The playground console prints `The answer is 42`.
+The playground console prints `Hello, Lume!`.
 
 ## How developers can use Lume
 

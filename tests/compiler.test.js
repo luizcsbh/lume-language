@@ -40,7 +40,7 @@ test("API pública do pacote executa o exemplo Hello World com imports explícit
   instance = result.instance;
 
   assert.equal(instance.exports.main(), 0);
-  assert.deepEqual(printed, ["A resposta é 42"]);
+  assert.deepEqual(printed, ["Olá, Lume!"]);
   assert.equal(WebAssembly.validate(result.output.bytes), true);
   assert.equal(WebAssembly.validate(compiled.bytes), true);
   assert.match(compiled.wat, /export "main"/);

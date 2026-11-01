@@ -124,9 +124,12 @@ body{font-size:16px}
 .privacy-note p{font-size:11px}
 .geo-map .leaflet-control-attribution{font-size:12px}
 .geo-map .maplibregl-ctrl-attrib{font-size:10px}
-.workbench{grid-template-columns:minmax(0,1.07fr) minmax(0,.93fr)}
+.playground-layout{display:grid;grid-template-columns:minmax(0,1.07fr) minmax(0,.93fr)}
+.workbench{display:contents}
 .editor-panel{border-right:1px solid var(--line);border-bottom:0}
 .editor-frame{height:clamp(420px,58vh,680px)}
 .canvas-stage{height:clamp(320px,32vw,500px)}
+.playground-layout>.console-wrap{margin:12px 11px 16px}
+.playground-layout>.inspector{border-top:0;border-left:1px solid var(--line);padding:14px 18px 0}
 .console-output{height:160px}
-@media(max-width:760px){.workbench{grid-template-columns:minmax(0,1fr)}.editor-panel{border-right:0;border-bottom:1px solid var(--line)}.editor-frame{height:clamp(360px,60vh,560px)}.canvas-stage{height:clamp(280px,72vw,420px)}.console-output{height:140px}}
+@media(max-width:760px){.playground-layout{grid-template-columns:minmax(0,1fr)}.editor-panel{border-right:0;border-bottom:1px solid var(--line)}.playground-layout>.console-wrap{margin:12px 11px 16px}.playground-layout>.inspector{border-left:0;border-top:1px solid var(--line);padding:14px 12px 0}.editor-frame{height:clamp(360px,60vh,560px)}.canvas-stage{height:clamp(280px,72vw,420px)}.console-output{height:140px}}

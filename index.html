@@ -44,6 +44,7 @@
           </div>
         </div>
 
+        <div class="playground-layout">
         <div class="workbench">
           <section class="editor-panel" aria-label="Editor de código">
             <div class="panel-heading"><div><span class="section-index">A /</span><h2>Editor</h2></div>
@@ -78,11 +79,12 @@
               <div class="result-pill" id="result-pill" hidden><span>DOM</span><strong id="result-value">—</strong></div>
             </div>
             <div class="input-strip"><label for="input-slider"><span>ENTRADA DO DOM</span><span>quantidade <strong id="input-value">28</strong></span></label><input id="input-slider" type="range" min="4" max="72" value="28" aria-label="Quantidade de pontos"></div>
-            <div class="console-wrap">
-              <div class="console-heading"><span><span class="console-prompt">›_</span> CONSOLE</span><button type="button" class="clear-console" id="clear-console">limpar</button></div>
-              <div class="console-output" id="console-output" role="log" aria-live="polite"><p class="console-placeholder">A saída do programa aparece aqui.</p></div>
-            </div>
           </section>
+        </div>
+
+        <div class="console-wrap">
+          <div class="console-heading"><span><span class="console-prompt">›_</span> CONSOLE</span><button type="button" class="clear-console" id="clear-console">limpar</button></div>
+          <div class="console-output" id="console-output" role="log" aria-live="polite"><p class="console-placeholder">A saída do programa aparece aqui.</p></div>
         </div>
 
         <div class="inspector">
@@ -93,6 +95,7 @@
             <div class="stat-cell"><span>FORMATO</span><strong class="stat-format">.wasm</strong><small id="module-size">módulo ainda não gerado</small></div>
           </div>
           <details class="wat-details" id="wat-details"><summary><span>Ver representação WebAssembly Text</span><span class="summary-arrow">＋</span></summary><pre id="wat-output" class="wat-output">;; Compile o programa para inspecionar o módulo.</pre></details>
+        </div>
         </div>
       </section>
 
