@@ -9,6 +9,8 @@ function instantiate(source, host) {
   assert.equal(WebAssembly.validate(output.bytes), true, "o compilador deve gerar um módulo WASM válido");
   const defaultHost = {
     print_i32() {}, print_f64() {}, print_string() {}, print() {}, canvas_clear() {}, canvas_dot() {}, dom_value() {},
+    string_length() { return 0; }, string_byte_length() { return 0; }, string_equals() { return 0; },
+    string_contains() { return 0; }, string_concat() { return 0; }, string_slice() { return 0; },
     dom_set_i32() {}, dom_set_f64() {}, dom_set_visible() {}, read_slider() { return 0; }, listen_click() {},
     memory_alloc_i32() { return 1; }, memory_load_i32() { return 0; }, memory_store_i32() {},
     memory_load_f64() { return 0; }, memory_store_f64() {}, memory_length() { return 0; }, memory_array_offset() { return 0; },
@@ -65,6 +67,103 @@ export fn somar(a: i32, b: i32) -> i32 { return dobrar(a) + b; }`,
   assert.equal(instance.exports.main(), 61);
   assert.equal(instance.exports.somar, undefined);
   assert.match(output.wat, /call \$lume_m2_f0_dobrar/);
+});
+
+test("importa biblioteca padrão de arrays e matemática para o módulo WASM", async () => {
+  const source = `import { sum_i32, contains_i32, index_of_i32, fill_i32 } from "std/array.lume";
+import { clamp_i32, floor_f64, sqrt_f64 } from "std/math.lume";
+fn main() -> i32 {
+  let values: array<i32> = [4, 8, 12];
+  if !contains_i32(values, 8) { return 1; }
+  let index: i32 = index_of_i32(values, 12);
+  let total: i32 = sum_i32(values);
+  fill_i32(values, 3);
+  let precise: f64 = floor_f64(3.9) + sqrt_f64(9.0);
+  if precise != 6.0 { return 2; }
+  return total + index + values[0] + clamp_i32(40, 0, 10);
+}`;
+  const runtime = await instantiatePackage(source);
+  assert.equal(runtime.run(), 39);
+});
+
+test("biblioteca padrão de strings preserva UTF-8 em concatenação, fatia e comprimento", async () => {
+  const source = `import { concat, length, byte_length, equals, contains, slice } from "std/string.lume";
+fn main() -> i32 {
+  let value: string = concat("Lume ", "🌙");
+  if !equals(slice(value, 5, 6), "🌙") { return 1; }
+  if !contains(value, "Lume") { return 2; }
+  return length(value) * 100 + byte_length(value);
+}`;
+  const runtime = await instantiatePackage(source);
+  assert.equal(runtime.run(), 609);
+});
+
+test("executa async/await com múltiplas suspensões e preserva variáveis locais", async () => {
+  const source = `host async fn add(value: i32) -> i32;
+async fn main() -> i32 {
+  let value: i32 = await add(10);
+  value = await add(value);
+  return value + 1;
+}`;
+  const runtime = await instantiatePackage(source, {
+    host: { add: async value => value + 3 },
+  });
+  assert.equal(runtime.output.async, true);
+  assert.equal(await runtime.run(), 17);
+});
+
+test("converte argumentos e resultados string das funções host async", async () => {
+  const source = `host async fn echo(value: string) -> string;
+async fn main() -> i32 {
+  let value: string = await echo("olá 🌙");
+  return string_length(value);
+}`;
+  const runtime = await instantiatePackage(source, {
+    host: { echo: async value => value },
+  });
+  assert.equal(await runtime.run(), 5);
+});
+
+test("retoma resultados assíncronos bool e f64 com os tipos WASM correspondentes", async () => {
+  const source = `host async fn is_ready() -> bool;
+host async fn get_value() -> f64;
+async fn main() -> i32 {
+  let ready: bool = await is_ready();
+  let value: f64 = await get_value();
+  if ready && value == 4.5 { return 1; }
+  return 0;
+}`;
+  const runtime = await instantiatePackage(source, {
+    host: { is_ready: async () => true, get_value: async () => 4.5 },
+  });
+  assert.equal(await runtime.run(), 1);
+});
+
+test("propaga rejeições host async e cancela a execução ao liberar a instância", async () => {
+  const source = `host async fn wait() -> i32;
+async fn main() -> i32 { return await wait(); }`;
+  const rejected = await instantiatePackage(source, {
+    host: { wait: async () => { throw new Error("falha host"); } },
+  });
+  await assert.rejects(rejected.run(), /falha host/);
+
+  const pending = await instantiatePackage(source, {
+    host: { wait: () => new Promise(() => {}) },
+  });
+  const run = pending.run();
+  pending.dispose();
+  await assert.rejects(run, /liberada durante uma operação async/);
+});
+
+test("rejeita async fora do escopo de suporte explícito", () => {
+  assert.throws(
+    () => compile("async fn helper() -> i32 { return 0; } fn main() -> i32 { return 0; }"),
+    /suporte somente a main/,
+  );
+  assert.throws(
+    () => compile("fn main() -> i32 { let value: i32 = await work(); return value; }"),
+    /await só pode ser usado diretamente/,
+  );
 });
 
 test("API pública executa arrays e structs com heap gerenciado e libera ao retornar", async () => {

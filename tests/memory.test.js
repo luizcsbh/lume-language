@@ -34,6 +34,8 @@ function serviceFor(repository = new MemoryRepository()) {
 
 const wasmDefaults = {
   print_i32() {}, print_f64() {}, print_string() {}, print() {}, canvas_clear() {}, canvas_dot() {}, dom_value() {},
+  string_length() { return 0; }, string_byte_length() { return 0; }, string_equals() { return 0; },
+  string_contains() { return 0; }, string_concat() { return 0; }, string_slice() { return 0; },
   dom_set_i32() {}, dom_set_f64() {}, dom_set_visible() {}, read_slider() { return 0; }, listen_click() {},
   memory_load_f64() { return 0; }, memory_store_f64() {}, memory_length() { return 0; }, memory_array_offset() { return 0; },
   array_allocate_i32() { return 1; }, array_allocate_f64() { return 1; }, array_allocate_ref() { return 1; },

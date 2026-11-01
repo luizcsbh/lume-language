@@ -18,7 +18,7 @@ After extracting the ZIP, open a terminal in that folder and run `python3 -m htt
    python3 -m http.server 8000
    ```
 3. Open `http://localhost:8000` in a modern browser.
-4. In the playground, choose an example or replace the code in the editor. The editor saves your source in the browser when local storage is available; it does not load or create `.lume` files.
+4. In the playground, choose an example, edit `main.lume`, and use **＋ Arquivo** to create modules. Tabs switch between files; the project is saved in browser storage when available. The playground does not read files from disk.
 5. Click **Compile** to inspect the generated WebAssembly Text, then **Run** to execute the program. You can also press `Ctrl/⌘ + Enter` to run.
 
 Try this minimal program in the editor:
@@ -64,7 +64,7 @@ const { run } = await instantiate(source, {
 run();
 ```
 
-Run it with `node app.mjs`. The console prints `42`. `instantiate` compiles and validates the WASM module and returns the instance and compilation output. `run()` executes `main()` and releases the managed heap when it returns, unless the program registers a click listener; in that case call `dispose()` after callbacks are finished. If calling `instance.exports.main()` directly, call `dispose()` when the program is finished. The runtime supplies managed-memory imports; provide an implementation in `host` for other imported functions your program uses. Calling a missing import throws an explicit error.
+Run it with `node app.mjs`. The console prints `42`. `instantiate` compiles and validates the WASM module and returns the instance and compilation output. `run()` executes `main()` and releases the managed heap when it returns (or when the Promise resolves for `async fn main`), unless the program registers a click listener; in that case call `dispose()` after callbacks are finished. If calling `instance.exports.main()` directly, call `dispose()` when the program is finished. The runtime supplies managed-memory imports; provide an implementation in `host` for other imported functions your program uses. Calling a missing import throws an explicit error.
 
 ### Importing Lume modules
 
@@ -87,7 +87,56 @@ const { run } = await instantiate(source, {
 console.log(run()); // 42
 ```
 
-Modules are compiled into one WebAssembly module. Only source files explicitly provided through `modules` can be imported; paths are relative `.lume` paths, and no filesystem or network access occurs during resolution.
+Modules are compiled into one WebAssembly module. Only source files explicitly provided through `modules` can be imported; paths are relative `.lume` paths, and no filesystem or network access occurs during resolution. The browser playground exposes these source files as tabs, with `main.lume` as the entry point.
+
+### Standard library
+
+The compiler bundles these modules, which cannot be overridden through the `modules` option:
+
+```lume
+import { sum_i32, contains_i32 } from "std/array.lume";
+import { clamp_i32, sqrt_f64 } from "std/math.lume";
+import { concat, length, slice } from "std/string.lume";
+```
+
+`std/array.lume` provides sums, search, index lookup, and fill operations for `i32`/`f64` arrays; `std/math.lume` provides clamps and common `f64` operations; `std/string.lume` provides concatenation, equality, search, slicing, Unicode code-point length, and UTF-8 byte length. `concat` and `slice` allocate strings in WASM linear memory, capped at 16 MiB per module. `sqrt_f64` follows IEEE-754 and returns `NaN` for negative input. `clamp_*` requires `minimum <= maximum`.
+
+This is an initial set of modules, not yet a comprehensive standard library.
+
+### Experimental async/await
+
+The compiler includes a portable continuation-based async path without JSPI. In this version, `async fn` is supported only on `main`; `await` must be the direct value of a declaration, assignment, or return at the function's top level. Await inside expressions, conditions, loops, nested blocks, or helper functions is explicitly rejected.
+
+Declare each asynchronous host operation before the functions:
+
+```lume
+host async fn sleep_ms(milliseconds: i32) -> i32;
+
+async fn main() -> i32 {
+  let waited: i32 = await sleep_ms(25);
+  print_i32(waited);
+  return waited;
+}
+```
+
+In the playground, the Worker provides `sleep_ms(i32)`, which resolves with the duration after waiting. With the package API, provide the implementation in `host` and await the result of `run()`:
+
+```js
+const source = `
+host async fn sleep_ms(milliseconds: i32) -> i32;
+async fn main() -> i32 {
+  let waited: i32 = await sleep_ms(25);
+  return waited;
+}`;
+const runtime = await instantiate(source, {
+  host: {
+    sleep_ms: milliseconds => new Promise(resolve => setTimeout(() => resolve(milliseconds), milliseconds)),
+  },
+});
+const result = await runtime.run();
+```
+
+Synchronous `run()` calls still return the `i32` directly; for an `async fn main`, it returns a Promise. Async host functions can receive and return `i32`, `f64`, `bool`, or `string`; rejections are propagated, and `dispose()` cancels the instance's wait. This is not general async support yet: helper functions cannot be async, and `await` is not allowed in nested control flow.
 
 To compile and inspect without instantiating:
 
@@ -98,7 +147,7 @@ const source = "fn main() -> i32 { return 0; }";
 const { bytes, wat, functions } = compile(source);
 ```
 
-This helper runs `main()` synchronously on the current thread; use a Web Worker in a browser UI to avoid blocking the page. The package does not create a DOM or Canvas bridge automatically: provide those integrations through your application's `host` functions. WebAssembly and Workers are not a sandbox for hostile code.
+`compile()` only generates the module. `instantiate().run()` executes `main()` on the current thread: it returns the `i32` directly for a synchronous function and a Promise for `async fn main`. In a browser UI, use a Web Worker to avoid blocking the page. The package does not create a DOM or Canvas bridge automatically: provide those integrations through your application's `host` functions. WebAssembly and Workers are not a sandbox for hostile code.
 
 ### Use through the playground
 
@@ -162,7 +211,7 @@ fn main() -> i32 {
 }
 ```
 
-Functions use `fn`; parameters have names and types (`name: type`), and a return type may follow `->`. `main` is the entry point, takes no parameters, and returns `i32`. Available primitive types are `i32`, `f64`, `bool`, and `string`; booleans use WebAssembly's `i32` representation, and strings are stored as UTF-8 in the module's memory. Local variables use `let name: type = value;` and can be updated. Integers are written without a decimal point; decimals are `f64`. The prototype supports `if`/`else`, `while`, function calls, recursion, assignment, `//` and `/* ... */` comments, arithmetic, comparisons, and `&&`/`||` boolean operators (without short-circuit evaluation). Implicit conversions and string concatenation with `+` are not included; `print("text", number)` joins text and a number only in its output.
+Functions use `fn`; parameters have names and types (`name: type`), and a return type may follow `->`. `main` is the entry point, takes no parameters, and returns `i32`. Available primitive types are `i32`, `f64`, `bool`, and `string`; booleans use WebAssembly's `i32` representation, and strings are stored as UTF-8 in the module's memory. Local variables use `let name: type = value;` and can be updated. Integers are written without a decimal point; decimals are `f64`. The prototype supports `if`/`else`, `while`, function calls, recursion, assignment, `//` and `/* ... */` comments, arithmetic, comparisons, and `&&`/`||` boolean operators (without short-circuit evaluation). Implicit conversions and string concatenation with `+` are not included; `print("text", number)` joins text and a number only in its output. Import the standard string, array, and math modules for those operations.
 
 ### Arrays and structs
 

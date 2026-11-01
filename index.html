@@ -8,6 +8,7 @@
   <title>Lume — código leve, ideias rápidas</title>
   <link rel="icon" href="./logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./file-tabs.css">
 </head>
 <body>
   <div class="app-shell">
@@ -35,12 +36,20 @@
 
       <section class="playground" aria-label="Playground de código Lume">
         <div class="workspace-bar">
-          <div class="file-label"><span class="file-glyph">◈</span><span>experimento.lume</span><span class="unsaved-dot" id="unsaved-dot" hidden></span></div>
+          <div class="file-label"><span class="file-glyph">◈</span><span id="active-file-name">main.lume</span><span class="unsaved-dot" id="unsaved-dot" hidden></span></div>
           <div class="bar-center"><span class="tiny-wasm">WASM</span><span id="status-label" class="status-label">pronto para compilar</span></div>
           <div class="bar-actions">
             <button class="button button-quiet" id="compile-button" type="button" title="Compilar código (Ctrl/⌘ + Enter)"><span class="button-icon">⌘</span> Compilar</button>
             <button class="button button-run" id="run-button" type="button" title="Compilar e executar"><span class="play-icon" aria-hidden="true">▶</span> Executar</button>
             <button class="button button-stop" id="stop-button" type="button" disabled title="Interromper a execução">Interromper</button>
+          </div>
+        </div>
+
+        <div class="filebar">
+          <div class="file-tabs" id="file-tabs" role="tablist" aria-label="Arquivos Lume"></div>
+          <div class="file-actions">
+            <button class="file-action" id="add-file" type="button" aria-label="Adicionar arquivo Lume">＋ Arquivo</button>
+            <button class="file-action" id="remove-file" type="button" aria-label="Remover arquivo atual" disabled>− Remover</button>
           </div>
         </div>
 
@@ -57,6 +66,8 @@
                   <option value="math">Funções & cálculo</option>
                   <option value="dom">DOM em lote</option>
                   <option value="memory">Memória &amp; threads</option>
+                  <option value="modules">Módulos</option>
+                  <option value="async">Async / await</option>
                 </select>
               </label>
             </div>
@@ -123,6 +134,6 @@ if ativo { print_f64(pi); }</pre></article>
     </main>
     <footer class="footer"><a class="footer-brand" href="https://luizcsbh.github.io/lume-language/#inicio"><img src="./logo.svg" width="22" height="22" alt=""> LUME<span>.</span></a><span>Um experimento aberto para a web.</span><a href="#guia">Sintaxe & compilação ↑</a></footer>
   </div>
-  <script type="module" src="./src/app.js?v=lume-print-20261101-r2"></script>
+  <script type="module" src="./src/app.js?v=lume-async-20261102-r1"></script>
 </body>
 </html>

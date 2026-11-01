@@ -1,6 +1,6 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { EXAMPLES } from "../src/examples.js";
+import { EXAMPLES, EXAMPLE_MODULES } from "../src/examples.js";
 
 const messages = [];
 const workerScope = {
@@ -48,6 +48,26 @@ test("compila e executa imports de módulos no Worker", async () => {
   assert.equal(result.some(message => message.type === "error"), false);
 });
 
+test("executa projeto multi-arquivo de exemplo no Worker", async () => {
+  const result = await run(EXAMPLES.modules, EXAMPLE_MODULES.modules);
+  assert.equal(result.find(message => message.type === "done")?.returnValue, 42);
+  assert.deepEqual(result.filter(message => message.type === "output").map(message => message.text), ["Resposta: 42"]);
+  assert.equal(result.some(message => message.type === "error"), false);
+});
+
+test("expõe a biblioteca padrão de strings no Worker", async () => {
+  const source = `import { concat, length, byte_length } from "std/string.lume";
+fn main() -> i32 {
+  let value: string = concat("Lume ", "🌙");
+  print_string(value);
+  return length(value) * 100 + byte_length(value);
+}`;
+  const result = await run(source);
+  assert.equal(result.find(message => message.type === "done")?.returnValue, 609);
+  assert.deepEqual(result.filter(message => message.type === "output").map(message => message.text), ["Lume 🌙"]);
+  assert.equal(result.some(message => message.type === "error"), false);
+});
+
 test("executa o exemplo visual de arrays e structs no heap do Worker", async () => {
   const result = await run(EXAMPLES.arrays);
   assert.equal(result.find(message => message.type === "done")?.returnValue, 42);
@@ -56,6 +76,40 @@ test("executa o exemplo visual de arrays e structs no heap do Worker", async () 
     "4",
   ]);
   assert.equal(result.find(message => message.type === "memory-stats")?.stats.usedBytes, 44);
+  assert.equal(result.some(message => message.type === "error"), false);
+});
+
+test("agenda await no Worker e retoma a função principal", async () => {
+  const source = `host async fn sleep_ms(milliseconds: i32) -> i32;
+async fn main() -> i32 {
+  let waited: i32 = await sleep_ms(0);
+  print_i32(waited);
+  return waited + 42;
+}`;
+  const result = await run(source);
+  assert.equal(result.find(message => message.type === "done")?.returnValue, 42);
+  assert.deepEqual(result.filter(message => message.type === "output").map(message => message.text), ["0"]);
+  assert.equal(result.some(message => message.type === "error"), false);
+});
+
+test("expõe erro explícito quando o playground não fornece a função host async", async () => {
+  const source = `host async fn request() -> i32;
+async fn main() -> i32 { return await request(); }`;
+  const result = await run(source);
+  assert.equal(result.some(message => message.type === "done"), false);
+  assert.match(result.find(message => message.type === "error")?.message ?? "", /não está disponível no playground/);
+});
+
+test("cancela tarefas async antigas e ignora suas conclusões após nova execução", async () => {
+  const pendingSource = `host async fn sleep_ms(milliseconds: i32) -> i32;
+async fn main() -> i32 { return await sleep_ms(60000); }`;
+  const pendingRun = workerScope.onmessage({ data: { type: "run", source: pendingSource } });
+  while (!messages.some(message => message.type === "running")) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  const result = await run("fn main() -> i32 { return 7; }");
+  await pendingRun;
+  assert.equal(result.find(message => message.type === "done")?.returnValue, 7);
   assert.equal(result.some(message => message.type === "error"), false);
 });
 

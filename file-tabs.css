@@ -1,0 +1,79 @@
+.filebar {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #111310;
+}
+
+.file-tabs,
+.file-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.file-tabs {
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.file-tab,
+.file-action {
+  min-height: 29px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 0 9px;
+  background: transparent;
+  color: #92988a;
+  cursor: pointer;
+  white-space: nowrap;
+  font: 10px var(--mono);
+}
+
+.file-tab:hover,
+.file-action:hover:not(:disabled) {
+  background: #20231f;
+  color: #e6e9df;
+}
+
+.file-tab.is-active {
+  border-color: #363b32;
+  background: #1b1e19;
+  color: var(--lime);
+}
+
+.file-action {
+  border-color: #343931;
+  color: #b7bcae;
+}
+
+.file-action:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.file-tab:focus-visible,
+.file-action:focus-visible {
+  outline: 1px solid var(--lime);
+  outline-offset: 2px;
+}
+
+@media(max-width:620px) {
+  .filebar {
+    gap: 6px;
+    padding: 5px 7px;
+  }
+
+  .file-tab,
+  .file-action {
+    min-height: 27px;
+    padding: 0 6px;
+    font-size: 9px;
+  }
+}

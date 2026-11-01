@@ -25,6 +25,7 @@ await Promise.all([
   copy("index.html", "playground/index.html"),
   copy("localizacao.html", "playground/localizacao.html"),
   copy("styles.css", "playground/styles.css"),
+  copy("file-tabs.css", "playground/file-tabs.css"),
   copy("logo.svg", "playground/logo.svg"),
   copy("src", "playground/src"),
   copy("vendor", "playground/vendor"),

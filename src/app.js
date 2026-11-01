@@ -1,4 +1,4 @@
-import { EXAMPLES } from "./examples.js?v=lume-print-20261101-r2";
+import { EXAMPLES, EXAMPLE_MODULES } from "./examples.js?v=lume-async-20261102-r1";
 import { DOMRepository } from "./dom-repository.js?v=lume-dom-20261101-r1";
 import { DOMService } from "./dom-service.js?v=lume-dom-20261101-r1";
 
@@ -12,25 +12,117 @@ const output = $("#console-output");
 const slider = $("#input-slider");
 const domService = new DOMService(new DOMRepository(document));
 let worker = null;
-let lastCompiledSource = null;
-let pendingSource = "";
+let lastCompiledProject = null;
+let pendingProjectKey = "";
 let pointerReady = false;
 let clickEnabled = false;
 let domBridgeFailed = false;
 let runStartedAt = 0;
+const PROJECT_STORAGE_KEY = "lume-project";
+
+function readSavedProject() {
+  try {
+    const saved = localStorage.getItem(PROJECT_STORAGE_KEY);
+    if (saved) {
+      const project = JSON.parse(saved);
+      if (project?.files && typeof project.files === "object" && !Array.isArray(project.files)) {
+        const files = Object.entries(project.files).filter(([name, source]) =>
+          /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.lume$/.test(name) && typeof source === "string");
+        if (files.some(([name]) => name === "main.lume")) {
+          return { files: new Map(files), activeFile: project.activeFile };
+        }
+      }
+    }
+    const legacySource = localStorage.getItem("lume-source");
+    return { files: new Map([["main.lume", legacySource || EXAMPLES.dots]]), activeFile: "main.lume" };
+  } catch {
+    return { files: new Map([["main.lume", EXAMPLES.dots]]), activeFile: "main.lume" };
+  }
+}
+
+const savedProject = readSavedProject();
+let projectFiles = savedProject.files;
+let activeFile = projectFiles.has(savedProject.activeFile) ? savedProject.activeFile : "main.lume";
+
+function saveProject() {
+  try {
+    localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify({
+      files: Object.fromEntries(projectFiles),
+      activeFile,
+    }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function currentProject() {
+  const modules = Object.fromEntries([...projectFiles].filter(([name]) => name !== "main.lume"));
+  return { source: projectFiles.get("main.lume"), modules };
+}
+
+function renderFileTabs() {
+  const tabs = $("#file-tabs");
+  tabs.replaceChildren();
+  const names = [...projectFiles.keys()].sort((left, right) =>
+    left === "main.lume" ? -1 : right === "main.lume" ? 1 : left.localeCompare(right));
+  for (const name of names) {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = `file-tab${name === activeFile ? " is-active" : ""}`;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(name === activeFile));
+    tab.textContent = name;
+    tab.addEventListener("click", () => selectFile(name));
+    tabs.append(tab);
+  }
+  $("#active-file-name").textContent = activeFile;
+  $("#remove-file").disabled = activeFile === "main.lume";
+}
+
+function selectFile(name) {
+  if (!projectFiles.has(name)) return;
+  activeFile = name;
+  editor.value = projectFiles.get(name);
+  highlight(editor.value);
+  $("#unsaved-dot").hidden = true;
+  renderFileTabs();
+  saveProject();
+}
+
+function addFile() {
+  let number = 1;
+  while (projectFiles.has(`module-${number}.lume`)) number++;
+  const name = `module-${number}.lume`;
+  projectFiles.set(name, "export fn value() -> i32 {\n  return 0;\n}");
+  selectFile(name);
+  editor.focus();
+  editor.setSelectionRange(editor.value.indexOf("0;"), editor.value.indexOf("0;") + 1);
+}
+
+function removeFile() {
+  if (activeFile === "main.lume") return;
+  projectFiles.delete(activeFile);
+  activeFile = "main.lume";
+  editor.value = projectFiles.get(activeFile);
+  highlight(editor.value);
+  $("#unsaved-dot").hidden = true;
+  renderFileTabs();
+  saveProject();
+}
 
 function escapeHtml(text) {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 function highlight(source) {
-  const tokenPattern = /(\/\/[^\n]*|\b(?:fn|let|return|if|else|while|true|false|struct|import|from|as|export)\b|\b(?:i32|f64|bool|string|array)\b|\b(?:print|print_i32|print_f64|print_string|canvas_clear|canvas_dot|dom_value|dom_set_i32|dom_set_f64|dom_set_visible|read_slider|listen_click|memory_alloc_i32|memory_load_i32|memory_store_i32|memory_load_f64|memory_store_f64|memory_length|memory_array_offset|memory_free|array_i32|array_f64|array_bool|array_string|array_ref)\b(?=\s*\()|\b[A-Za-z_]\w*(?=\s*\()|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')/g;
+  const tokenPattern = /(\/\/[^\n]*|\b(?:fn|let|return|if|else|while|true|false|struct|import|from|as|export|async|await|host)\b|\b(?:i32|f64|bool|string|array)\b|\b(?:print|print_i32|print_f64|print_string|string_length|string_byte_length|string_equals|string_contains|string_concat|string_slice|intrinsic_abs_f64|intrinsic_ceil_f64|intrinsic_floor_f64|intrinsic_trunc_f64|intrinsic_round_f64|intrinsic_sqrt_f64|canvas_clear|canvas_dot|dom_value|dom_set_i32|dom_set_f64|dom_set_visible|read_slider|listen_click|memory_alloc_i32|memory_load_i32|memory_store_i32|memory_load_f64|memory_store_f64|memory_length|memory_array_offset|memory_free|array_i32|array_f64|array_bool|array_string|array_ref)\b(?=\s*\()|\b[A-Za-z_]\w*(?=\s*\()|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')/g;
   const renderToken = token => {
     let kind = "";
     if (token.startsWith("//")) kind = "comment";
     else if (token.startsWith('"') || token.startsWith("'")) kind = "string";
-    else if (/^(fn|let|return|if|else|while|true|false|struct|import|from|as|export)$/.test(token)) kind = "keyword";
+    else if (/^(fn|let|return|if|else|while|true|false|struct|import|from|as|export|async|await|host)$/.test(token)) kind = "keyword";
     else if (/^(i32|f64|bool|string|array)$/.test(token)) kind = "type";
-    else if (/^(print|print_i32|print_f64|print_string|canvas_clear|canvas_dot|dom_value|dom_set_i32|dom_set_f64|dom_set_visible|read_slider|listen_click|memory_alloc_i32|memory_load_i32|memory_store_i32|memory_load_f64|memory_store_f64|memory_length|memory_array_offset|memory_free|array_i32|array_f64|array_bool|array_string|array_ref)$/.test(token)) kind = "builtin";
+    else if (/^(print|print_i32|print_f64|print_string|string_length|string_byte_length|string_equals|string_contains|string_concat|string_slice|intrinsic_abs_f64|intrinsic_ceil_f64|intrinsic_floor_f64|intrinsic_trunc_f64|intrinsic_round_f64|intrinsic_sqrt_f64|canvas_clear|canvas_dot|dom_value|dom_set_i32|dom_set_f64|dom_set_visible|read_slider|listen_click|memory_alloc_i32|memory_load_i32|memory_store_i32|memory_load_f64|memory_store_f64|memory_length|memory_array_offset|memory_free|array_i32|array_f64|array_bool|array_string|array_ref)$/.test(token)) kind = "builtin";
     else if (/^\d/.test(token)) kind = "number";
     else kind = "function";
     return `<span class="token-${kind}">${escapeHtml(token)}</span>`;
@@ -99,7 +191,7 @@ function formatBytes(value) {
 function stopWorker(showMessage = true) {
   if (worker) worker.terminate();
   worker = null;
-  lastCompiledSource = null;
+  lastCompiledProject = null;
   clickEnabled = false;
   canvas.classList.remove("listening-for-click");
   $("#stop-button").disabled = true;
@@ -108,10 +200,10 @@ function stopWorker(showMessage = true) {
     addConsole("worker finalizado; a interface permanece responsiva", "info");
   }
 }
-function newWorker(action, source) {
+function newWorker(action, source, modules = {}) {
   if (worker) worker.terminate();
-  worker = new Worker(new URL("./worker.js?v=lume-aggregates-20261101-r1", import.meta.url), { type: "module" });
-  pendingSource = source;
+  worker = new Worker(new URL("./worker.js?v=lume-async-20261102-r1", import.meta.url), { type: "module" });
+  pendingProjectKey = JSON.stringify({ source, modules });
   pointerReady = false;
   clickEnabled = false;
   domBridgeFailed = false;
@@ -130,7 +222,7 @@ function newWorker(action, source) {
     const message = event.data || {};
     switch (message.type) {
       case "compiled":
-        lastCompiledSource = pendingSource;
+        lastCompiledProject = pendingProjectKey;
         $("#compile-time").textContent = formatMs(message.compileMs);
         $("#module-size").textContent = `${message.bytes} bytes`;
         $("#wat-output").textContent = message.wat;
@@ -198,18 +290,21 @@ function newWorker(action, source) {
     $("#stop-button").disabled = true;
   };
   worker.postMessage({ type: "slider", value: Number(slider.value) });
-  worker.postMessage({ type: action, source });
+  worker.postMessage({ type: action, source, modules });
   $("#compile-button").disabled = false;
   $("#run-button").disabled = false;
 }
 function compileCurrent() {
-  const source = editor.value;
-  newWorker("compile", source);
+  projectFiles.set(activeFile, editor.value);
+  const project = currentProject();
+  newWorker("compile", project.source, project.modules);
 }
 function runCurrent() {
-  const source = editor.value;
+  projectFiles.set(activeFile, editor.value);
+  const project = currentProject();
+  const projectKey = JSON.stringify(project);
   output.replaceChildren();
-  if (worker && lastCompiledSource === source) {
+  if (worker && lastCompiledProject === projectKey) {
     clearCanvas();
     $("#result-pill").hidden = true;
     runStartedAt = performance.now();
@@ -220,19 +315,19 @@ function runCurrent() {
     worker.postMessage({ type: "run" });
     return;
   }
-  newWorker("run", source);
+  newWorker("run", project.source, project.modules);
 }
 
-let savedSource = "";
-try { savedSource = localStorage.getItem("lume-source") || ""; } catch { /* armazenamento opcional */ }
-editor.value = savedSource || EXAMPLES.dots;
+editor.value = projectFiles.get(activeFile);
+renderFileTabs();
 highlight(editor.value);
 clearCanvas();
 
 editor.addEventListener("input", () => {
+  projectFiles.set(activeFile, editor.value);
   highlight(editor.value);
   $("#unsaved-dot").hidden = false;
-  try { localStorage.setItem("lume-source", editor.value); } catch { /* editor continua funcionando sem armazenamento */ }
+  if (!saveProject()) $("#unsaved-dot").hidden = false;
 });
 editor.addEventListener("scroll", () => {
   syntaxLayer.scrollTop = editor.scrollTop;
@@ -254,13 +349,21 @@ $("#compile-button").addEventListener("click", compileCurrent);
 $("#run-button").addEventListener("click", runCurrent);
 $("#stop-button").addEventListener("click", () => stopWorker(true));
 $("#clear-console").addEventListener("click", () => output.replaceChildren());
+$("#add-file").addEventListener("click", addFile);
+$("#remove-file").addEventListener("click", removeFile);
 $("#example-select").addEventListener("change", event => {
   const source = EXAMPLES[event.target.value];
   if (!source) return;
+  projectFiles = new Map([
+    ["main.lume", source],
+    ...Object.entries(EXAMPLE_MODULES[event.target.value] ?? {}),
+  ]);
+  activeFile = "main.lume";
   editor.value = source;
-  highlight(source);
+  renderFileTabs();
+  highlight(editor.value);
   $("#unsaved-dot").hidden = true;
-  try { localStorage.setItem("lume-source", source); } catch { /* armazenamento opcional */ }
+  saveProject();
   setStatus("exemplo carregado");
 });
 slider.addEventListener("input", () => {

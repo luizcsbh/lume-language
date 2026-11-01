@@ -20,7 +20,7 @@ try {
   geolocationPolicyAllows = true;
 }
 const supported = isSecureContext && geolocationApiAvailable && geolocationPolicyAllows;
-const worker = new Worker(new URL("./worker.js?v=lume-print-20261101-r2", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=lume-async-20261102-r1", import.meta.url), { type: "module" });
 let moduleReady = false;
 let moduleFailed = false;
 let requestPending = false;

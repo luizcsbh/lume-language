@@ -22,6 +22,8 @@
   "files": [
     "src/compiler.js",
     "src/index.js",
+    "src/stdlib.js",
+    "src/string-host.js",
     "src/runtime.js",
     "src/memory-contract.js",
     "src/memory-host.js",

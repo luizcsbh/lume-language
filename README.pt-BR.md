@@ -16,7 +16,7 @@ Depois de extrair o ZIP, abra um terminal nessa pasta e execute `python3 -m http
    python3 -m http.server 8000
    ```
 3. Acesse `http://localhost:8000` em um navegador moderno.
-4. No playground, escolha um exemplo ou substitua o código no editor. Quando o armazenamento local está disponível, o editor salva o código no navegador; ele não carrega nem cria arquivos `.lume`.
+4. No playground, escolha um exemplo, edite `main.lume` e use **＋ Arquivo** para criar módulos. As abas alternam entre arquivos; o projeto é salvo no armazenamento local quando disponível. O playground não lê arquivos do disco.
 5. Clique em **Compilar** para inspecionar a representação WebAssembly Text e depois em **Executar** para rodar o programa. Também é possível usar `Ctrl/⌘ + Enter`.
 
 Teste este programa mínimo no editor:
@@ -59,7 +59,7 @@ const { run } = await instantiate(source, {
   },
 });
 
-instance.exports.main();
+run();
 ```
 
 Execute com `node app.mjs`. O console mostrará `42`. A função `instantiate` compila e valida o módulo WASM e devolve a instância e os dados da compilação. Implemente no objeto `host` cada função importada que seu programa usar; se o programa chamar uma função ausente, o runtime lança um erro explícito.
@@ -73,7 +73,7 @@ const source = "fn main() -> i32 { return 0; }";
 const { bytes, wat, functions } = compile(source);
 ```
 
-Este helper executa `main()` de forma síncrona na thread atual; em uma interface de navegador, use um Web Worker para evitar bloquear a tela. O pacote não cria automaticamente uma ponte DOM ou Canvas: essas integrações devem ser fornecidas pelas funções `host` da sua aplicação. WebAssembly e Worker não são uma sandbox para código hostil.
+`compile()` apenas gera o módulo. `instantiate().run()` executa `main()` na thread atual: retorna o `i32` diretamente para uma função síncrona e uma Promise para `async fn main`. Em uma interface de navegador, use um Web Worker para evitar bloquear a tela. O pacote não cria automaticamente uma ponte DOM ou Canvas: essas integrações devem ser fornecidas pelas funções `host` da sua aplicação. WebAssembly e Worker não são uma sandbox para código hostil.
 
 ### Usar pelo playground
 
@@ -137,7 +137,7 @@ fn main() -> i32 {
 }
 ```
 
-Funções são declaradas com `fn`, parâmetros têm nomes e tipos (`nome: tipo`), e o resultado pode vir depois de `->`. `main` é a entrada, não recebe parâmetros e retorna `i32`. Os tipos primitivos disponíveis são `i32`, `f64`, `bool` e `string`; booleanos usam a representação WebAssembly `i32`, e strings são armazenadas como UTF-8 na memória do módulo. Variáveis locais usam `let nome: tipo = valor;` e podem ser atualizadas. Inteiros são literais sem ponto decimal; decimais são `f64`. Existem `if`/`else`, `while`, chamadas de função, recursão, atribuição, comentários `//` e `/* ... */`, aritmética, comparações e operadores booleanos `&&` e `||` (com avaliação não short-circuit). Conversões implícitas e concatenação de strings com `+` não estão incluídas; `print("texto", numero)` concatena texto e número somente na saída.
+Funções são declaradas com `fn`, parâmetros têm nomes e tipos (`nome: tipo`), e o resultado pode vir depois de `->`. `main` é a entrada, não recebe parâmetros e retorna `i32`. Os tipos primitivos disponíveis são `i32`, `f64`, `bool` e `string`; booleanos usam a representação WebAssembly `i32`, e strings são armazenadas como UTF-8 na memória do módulo. Variáveis locais usam `let nome: tipo = valor;` e podem ser atualizadas. Inteiros são literais sem ponto decimal; decimais são `f64`. Existem `if`/`else`, `while`, chamadas de função, recursão, atribuição, comentários `//` e `/* ... */`, aritmética, comparações e operadores booleanos `&&` e `||` (com avaliação não short-circuit). Conversões implícitas e concatenação de strings com `+` não estão incluídas; `print("texto", numero)` concatena texto e número somente na saída. Para operações de strings, arrays e matemática, importe os módulos da biblioteca padrão.
 
 ### Arrays e structs
 
@@ -160,7 +160,7 @@ Para tamanhos conhecidos apenas durante a execução, use `array_i32(tamanho)`, 
 
 O runtime gerencia essas alocações em um heap limitado e as libera ao final de `run()`, exceto se um listener mantiver callbacks ativos; nesse caso, chame `dispose()` ao terminar. No playground, o Worker libera o heap ao fim da execução. Isso é gerenciamento por região de execução, não um garbage collector: arrays não mudam de tamanho e valores não são compartilhados entre execuções ou Workers.
 
-O compilador aceita módulos nomeados fornecidos explicitamente pelo host. Funções importadas precisam ser exportadas com `export fn`; caminhos são relativos, terminam em `.lume` e só podem resolver para fontes presentes no objeto `modules`:
+O compilador aceita módulos nomeados fornecidos explicitamente pelo host. Funções importadas precisam ser exportadas com `export fn`; caminhos são relativos, terminam em `.lume` e só podem resolver para fontes presentes no objeto `modules`. No playground, as abas de arquivos compõem esse mapa; `main.lume` é a entrada e os módulos auxiliares podem importar uns aos outros:
 
 ```lume
 import { somar as soma } from "./matematica.lume";
@@ -174,7 +174,7 @@ const source = `
 import { somar as soma } from "./matematica.lume";
 fn main() -> i32 { return soma(19, 23); }`;
 
-const { instance } = await instantiate(source, {
+const { run } = await instantiate(source, {
   modules: {
     "matematica.lume": "export fn somar(a: i32, b: i32) -> i32 { return a + b; }",
   },
@@ -184,9 +184,58 @@ const { instance } = await instantiate(source, {
 console.log(run()); // 42
 ```
 
-`run()` executa `main()` e libera o heap ao retornar, exceto quando o programa registra um listener de clique; nesse caso, chame `dispose()` após terminar os callbacks. Se chamar `instance.exports.main()` diretamente, libere os recursos com `dispose()` quando terminar. O runtime fornece os imports de memória gerenciada; implemente em `host` as demais funções importadas que seu programa usar. Chamadas a imports sem implementação falham explicitamente.
+`run()` executa `main()` e libera o heap ao retornar (ou ao resolver a Promise para `async fn main`), exceto quando o programa registra um listener de clique; nesse caso, chame `dispose()` após terminar os callbacks. Se chamar `instance.exports.main()` diretamente, libere os recursos com `dispose()` quando terminar. O runtime fornece os imports de memória gerenciada; implemente em `host` as demais funções importadas que seu programa usar. Chamadas a imports sem implementação falham explicitamente.
 
-O compilador combina os arquivos em um único módulo WASM; não lê arquivos nem busca módulos na rede. Módulos não importados são rejeitados.
+### Biblioteca padrão
+
+Os módulos padrão são embutidos no compilador e não podem ser substituídos por entradas do host:
+
+```lume
+import { sum_i32, contains_i32 } from "std/array.lume";
+import { clamp_i32, sqrt_f64 } from "std/math.lume";
+import { concat, length, slice } from "std/string.lume";
+```
+
+`std/array.lume` fornece soma, busca, índice e preenchimento para arrays `i32`/`f64`; `std/math.lume` fornece limites e operações `f64` usuais; `std/string.lume` oferece concatenação, igualdade, busca, fatia e comprimentos em pontos de código Unicode e bytes UTF-8. `concat` e `slice` alocam strings na memória linear WASM; o módulo tem limite de 16 MiB por execução. `sqrt_f64` segue IEEE-754 e retorna `NaN` para entradas negativas. `clamp_*` pressupõe `mínimo <= máximo`.
+
+Esse é um conjunto inicial de módulos, não uma biblioteca padrão abrangente.
+
+O compilador combina os arquivos importados em um único módulo WASM; não lê arquivos do disco nem busca módulos na rede. Módulos fornecidos mas não importados são rejeitados.
+
+### Async/await experimental
+
+O compilador oferece um primeiro fluxo portátil de retomada, sem depender de JSPI. Nesta versão, `async fn` é aceito somente em `main`; `await` deve ser o valor direto de uma declaração, atribuição ou retorno no nível principal da função. Await dentro de expressões, condições, laços, blocos aninhados ou funções auxiliares é rejeitado explicitamente.
+
+Declare cada operação assíncrona do host antes das funções:
+
+```lume
+host async fn sleep_ms(milliseconds: i32) -> i32;
+
+async fn main() -> i32 {
+  let waited: i32 = await sleep_ms(25);
+  print_i32(waited);
+  return waited;
+}
+```
+
+No playground, `sleep_ms(i32)` é fornecida pelo Worker e retorna a duração após aguardar. Pela API do pacote, forneça a implementação no objeto `host` e aguarde o resultado de `run()`:
+
+```js
+const source = `
+host async fn sleep_ms(milliseconds: i32) -> i32;
+async fn main() -> i32 {
+  let waited: i32 = await sleep_ms(25);
+  return waited;
+}`;
+const runtime = await instantiate(source, {
+  host: {
+    sleep_ms: milliseconds => new Promise(resolve => setTimeout(() => resolve(milliseconds), milliseconds)),
+  },
+});
+const result = await runtime.run();
+```
+
+O `run()` síncrono continua retornando o `i32` diretamente; para um `async fn main`, ele retorna uma Promise. As funções host async podem receber e retornar `i32`, `f64`, `bool` ou `string`; rejeições são propagadas, e `dispose()` cancela a espera da instância. Isso ainda não é async geral: não há `async` em funções auxiliares nem `await` em fluxo de controle aninhado.
 
 ## Interoperabilidade com JavaScript
 

@@ -6,4 +6,12 @@ export const EXAMPLES = {
   math: `// Funções, recursão e aritmética numérica compiladas para WASM.\nfn fibonacci(n: i32) -> i32 {\n  if n <= 1 {\n    return n;\n  }\n  return fibonacci(n - 1) + fibonacci(n - 2);\n}\n\nfn main() -> i32 {\n  let answer: i32 = fibonacci(20);\n  print_i32(answer);\n  let precise: f64 = 3.14 * 2.0;\n  print_f64(precise);\n  return answer;\n}`,
   dom: `// O host registra alvos numéricos; as escritas chegam em um lote validado.\n// 1=result-value · 2=input-value · 3=result-pill · 4=canvas-empty\nfn main() -> i32 {\n  let count: i32 = read_slider();\n  let precise: f64 = 3.14159;\n\n  dom_set_i32(1, count);\n  dom_set_f64(2, precise);\n  dom_set_visible(3, true);\n  dom_set_visible(4, false);\n  print_i32(count);\n  return count;\n}`,
   memory: `// Cada ponto representa uma célula do heap ou uma thread de execução.\n// Lume usa 1 Worker; JavaScript também usa 1 Worker para isolar o cálculo da interface.\nfn main() -> i32 {\n  canvas_clear();\n  let values: i32 = memory_alloc_i32(3);\n  memory_store_i32(values, 0, 19);\n  memory_store_i32(values, 1, 23);\n  memory_store_i32(values, 2, 0);\n\n  let total: i32 = memory_load_i32(values, 0) + memory_load_i32(values, 1);\n  memory_store_i32(values, 2, total);\n  print(\"Memória (células i32): \", 3);\n  print(\"Lume (threads): \", 1);\n  print(\"JavaScript (threads): \", 1);\n  print(\"Soma guardada no heap: \", memory_load_i32(values, 2));\n\n  let point: i32 = 0;\n  while point < 3 {\n    canvas_dot(80 + point * 26, 100, 9);\n    point = point + 1;\n  }\n  point = 0;\n  while point < 1 {\n    canvas_dot(80 + point * 26, 180, 9);\n    point = point + 1;\n  }\n  point = 0;\n  while point < 1 {\n    canvas_dot(80 + point * 26, 260, 9);\n    point = point + 1;\n  }\n\n  memory_free(values);\n  return total;\n}`,
+  modules: `import { double } from "./math.lume";\n\nfn main() -> i32 {\n  let answer: i32 = double(21);\n  print("Resposta: ", answer);\n  return answer;\n}`,
+  async: `// await suspende a execução e retoma main quando o host responde.\nhost async fn sleep_ms(milliseconds: i32) -> i32;\n\nasync fn main() -> i32 {\n  let waited: i32 = await sleep_ms(25);\n  print("Retomada após ms: ", waited);\n  return waited;\n}`,
+};
+
+export const EXAMPLE_MODULES = {
+  modules: {
+    "math.lume": "export fn double(value: i32) -> i32 { return value * 2; }",
+  },
 };

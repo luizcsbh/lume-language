@@ -1,8 +1,16 @@
+import { STANDARD_MODULES } from "./stdlib.js";
+
 const BUILTINS = [
   { name: "print_i32", params: ["i32"], result: null },
   { name: "print_f64", params: ["f64"], result: null },
   { name: "print_string", params: ["string"], result: null },
   { name: "print", params: ["string", "f64"], result: null },
+  { name: "string_length", params: ["string"], result: "i32" },
+  { name: "string_byte_length", params: ["string"], result: "i32" },
+  { name: "string_equals", params: ["string", "string"], result: "bool" },
+  { name: "string_contains", params: ["string", "string"], result: "bool" },
+  { name: "string_concat", params: ["string", "string"], result: "string" },
+  { name: "string_slice", params: ["string", "i32", "i32"], result: "string" },
   { name: "canvas_clear", params: [], result: null },
   { name: "canvas_dot", params: ["i32", "i32", "i32"], result: null },
   { name: "dom_value", params: ["i32"], result: null },
@@ -23,15 +31,31 @@ const BUILTINS = [
   { name: "array_allocate_ref", params: ["i32"], result: "i32" },
   { name: "memory_free", params: ["i32"], result: null },
 ];
+const ASYNC_BUILTINS = [
+  { name: "async_status", params: ["i32"], result: "i32" },
+  { name: "async_get_i32", params: ["i32"], result: "i32" },
+  { name: "async_get_f64", params: ["i32"], result: "f64" },
+  { name: "async_get_bool", params: ["i32"], result: "bool" },
+  { name: "async_get_string", params: ["i32"], result: "string" },
+];
 const TYPES = new Set(["i32", "f64", "bool", "string"]);
 const WASM_TYPE = { i32: 0x7f, f64: 0x7c, bool: 0x7f, string: 0x7f };
 const ARRAY_CONSTRUCTORS = new Map([
   ["array_i32", "i32"], ["array_f64", "f64"], ["array_bool", "bool"], ["array_string", "string"],
   ["array_ref", "ref"],
 ]);
-const KEYWORDS = new Set(["fn", "let", "return", "if", "else", "while", "true", "false", "import", "from", "as", "export", "struct"]);
+const INTRINSICS = new Map([
+  ["intrinsic_abs_f64", [0x99, "f64.abs"]],
+  ["intrinsic_ceil_f64", [0x9b, "f64.ceil"]],
+  ["intrinsic_floor_f64", [0x9c, "f64.floor"]],
+  ["intrinsic_trunc_f64", [0x9d, "f64.trunc"]],
+  ["intrinsic_round_f64", [0x9e, "f64.nearest"]],
+  ["intrinsic_sqrt_f64", [0x9f, "f64.sqrt"]],
+]);
+const KEYWORDS = new Set(["fn", "let", "return", "if", "else", "while", "true", "false", "import", "from", "as", "export", "struct", "async", "await", "host"]);
 export const MAX_LUME_SOURCE_UNITS = 65_536;
 export const MAX_LUME_PARSE_DEPTH = 128;
+export const MAX_WASM_MEMORY_PAGES = 256;
 
 export class LumeError extends Error {
   constructor(message, token = { line: 1, column: 1 }) {
@@ -183,6 +207,7 @@ class Parser {
     const functions = [];
     const imports = [];
     const structs = [];
+    const hostAsyncFunctions = [];
     let declarationsStarted = false;
     let functionsStarted = false;
     while (this.current().kind !== "eof") {
@@ -196,15 +221,20 @@ class Parser {
         if (this.structNames.has(declaration.name)) throw new LumeError(`struct “${declaration.name}” declarada mais de uma vez`, declaration.token);
         this.structNames.add(declaration.name);
         structs.push(declaration);
+      } else if (this.match("host")) {
+        if (functionsStarted) throw new LumeError("declarações host async devem aparecer antes das funções", this.previous());
+        declarationsStarted = true;
+        hostAsyncFunctions.push(this.hostAsyncDeclaration());
       } else {
         declarationsStarted = true;
         functionsStarted = true;
         const exported = this.match("export");
-        functions.push(this.functionDeclaration(exported));
+        const asynchronous = this.match("async");
+        functions.push(this.functionDeclaration(exported, asynchronous));
       }
     }
     if (!functions.length) throw new LumeError("escreva pelo menos uma função, por exemplo fn main() -> i32 { return 0; }");
-    return { functions, imports, structs };
+    return { functions, imports, structs, hostAsyncFunctions };
   }
   structDeclaration() {
     const name = this.expectName("esperado o nome da struct");
@@ -240,7 +270,14 @@ class Parser {
     this.expect(";", "termine o import com ;");
     return { path: path.value, names, token };
   }
-  functionDeclaration(exported = false) {
+  hostAsyncDeclaration() {
+    const token = this.previous();
+    this.expect("async", "declarações host devem usar “host async fn”");
+    const signature = this.functionSignature();
+    this.expect(";", "termine a declaração host com ;");
+    return { ...signature, token, exported: false, host: true };
+  }
+  functionSignature() {
     this.expect("fn", "cada declaração deve começar com fn");
     const name = this.expectName("esperado o nome da função");
     this.expect("(");
@@ -255,8 +292,12 @@ class Parser {
     this.expect(")");
     let result = "i32";
     if (this.match("->")) result = this.parseType();
+    return { name: name.value, token: name, params, result };
+  }
+  functionDeclaration(exported = false, asynchronous = false) {
+    const signature = this.functionSignature();
     const body = this.block();
-    return { name: name.value, token: name, params, result, body, exported };
+    return { ...signature, body, exported, asynchronous };
   }
   block() {
     const opening = this.expect("{", "esperado um bloco entre chaves");
@@ -322,6 +363,10 @@ class Parser {
   }
   prefix() { return this.withDepth(this.current(), () => this.parsePrefix()); }
   parsePrefix() {
+    if (this.match("await")) {
+      const token = this.previous();
+      return this.postfix({ kind: "await", value: this.prefix(), token });
+    }
     if (this.at("!") || this.at("-")) {
       const token = this.tokens[this.position++];
       return { kind: "unary", operator: token.value, value: this.prefix(), token };
@@ -412,18 +457,27 @@ function section(id, payload) { return [id, ...uleb(payload.length), ...payload]
 function signature(params, result) { return `${params.join(",")}>${result || ""}`; }
 const watType = type => type === "f64" ? "f64" : "i32";
 const wasmTypeCode = type => type === "f64" ? WASM_TYPE.f64 : WASM_TYPE.i32;
+const asyncGetter = type => `async_get_${type}`;
 
 class FunctionEmitter {
-  constructor(fn, functions, functionIndices, strings, functionBindings, structs) {
+  constructor(fn, functions, functionIndices, strings, functionBindings, structs, asyncContext = null) {
     this.fn = fn; this.functions = functions; this.functionIndices = functionIndices;
     this.functionBindings = functionBindings;
     this.structs = structs;
     this.strings = strings;
+    this.asyncContext = asyncContext;
     this.code = []; this.wat = []; this.locals = []; this.scopes = [new Map()];
     fn.params.forEach((param, index) => this.scopes[0].set(param.name, { index, type: param.type, token: param.token }));
+    for (const [name, variable] of asyncContext?.priorVariables ?? []) this.scopes[0].set(name, variable);
     this.paramCount = fn.params.length;
   }
   emit(opcode, text) { this.code.push(opcode); this.wat.push(text); }
+  globalGet(index) { this.emit(0x23, `global.get $g${index}`); this.code.push(...uleb(index)); }
+  globalSet(index) { this.emit(0x24, `global.set $g${index}`); this.code.push(...uleb(index)); }
+  setVariable(variable) {
+    if (variable.globalIndex !== undefined) this.globalSet(variable.globalIndex);
+    else { this.emit(0x21, `local.set $l${variable.index}_${variable.name}`); this.code.push(...uleb(variable.index)); }
+  }
   call(name) {
     const functionIndex = this.functionIndices.get(name);
     this.emit(0x10, `call $${name}`);
@@ -489,25 +543,84 @@ class FunctionEmitter {
         const valueType = this.compileExpression(node.value, node.type);
         if (valueType !== node.type) throw new LumeError(`a variável “${node.name}” é ${node.type}, mas recebeu ${valueType}`, node.token);
         if (this.scopes[this.scopes.length - 1].has(node.name)) throw new LumeError(`variável “${node.name}” já existe neste bloco`, node.token);
-        const index = this.paramCount + this.locals.length;
-        this.locals.push({ name: node.name, type: node.type });
-        this.scopes[this.scopes.length - 1].set(node.name, { index, type: node.type, token: node.token });
-        this.emit(0x21, `local.set $l${index}_${node.name}`); this.code.push(...uleb(index)); break;
+        const globalIndex = this.asyncContext?.localGlobals.get(node);
+        const variable = globalIndex === undefined
+          ? { index: this.paramCount + this.locals.length, type: node.type, token: node.token }
+          : { globalIndex, type: node.type, token: node.token, name: node.name };
+        if (globalIndex === undefined) this.locals.push({ name: node.name, type: node.type });
+        this.scopes[this.scopes.length - 1].set(node.name, variable);
+        this.setVariable(variable); break;
       }
       case "assign": {
         const variable = this.lookup(node.name, node.token);
         const valueType = this.compileExpression(node.value);
         if (valueType !== variable.type) throw new LumeError(`não é possível atribuir ${valueType} à variável ${variable.type} “${node.name}”`, node.token);
-        this.emit(0x21, `local.set $l${variable.index}_${node.name}`); this.code.push(...uleb(variable.index)); break;
+        this.setVariable({ ...variable, name: node.name }); break;
       }
       case "assign_target": {
         this.compileAssignment(node);
         break;
       }
       case "return": {
+        if (this.asyncContext) {
+          const type = this.compileExpression(node.value, this.fn.result);
+          if (type !== this.fn.result) throw new LumeError(`a função retorna ${this.fn.result}, mas recebeu ${type}`, node.token);
+          this.globalSet(this.asyncContext.resultGlobal);
+          this.constant("i32", this.asyncContext.doneState);
+          this.globalSet(this.asyncContext.stateGlobal);
+          this.constant("i32", 1);
+          this.emit(0x0f, "return");
+          break;
+        }
         const type = this.compileExpression(node.value, this.fn.result);
         if (type !== this.fn.result) throw new LumeError(`a função retorna ${this.fn.result}, mas recebeu ${type}`, node.token);
         this.emit(0x0f, "return"); break;
+      }
+      case "async_start": {
+        this.compileHostAsyncCall(node.call);
+        this.globalSet(this.asyncContext.futureGlobal);
+        this.constant("i32", node.nextState);
+        this.globalSet(this.asyncContext.stateGlobal);
+        this.constant("i32", 0);
+        this.emit(0x0f, "return");
+        break;
+      }
+      case "async_resume":
+      case "async_resume_return": {
+        this.globalGet(this.asyncContext.futureGlobal);
+        this.call("async_status");
+        this.emit(0x45, "i32.eqz");
+        this.emit(0x04, "if"); this.code.push(0x40);
+        this.constant("i32", 0);
+        this.emit(0x0f, "return");
+        this.emit(0x0b, "end");
+        this.globalGet(this.asyncContext.futureGlobal);
+        this.call(asyncGetter(node.type));
+        if (node.kind === "async_resume_return") {
+          this.globalSet(this.asyncContext.resultGlobal);
+          this.constant("i32", this.asyncContext.doneState);
+          this.globalSet(this.asyncContext.stateGlobal);
+          this.constant("i32", 1);
+          this.emit(0x0f, "return");
+        } else if (node.declaration) {
+          if (this.scopes[this.scopes.length - 1].has(node.name)) {
+            throw new LumeError(`variável “${node.name}” já existe neste bloco`, node.token);
+          }
+          const variable = {
+            globalIndex: this.asyncContext.localGlobals.get(node.declaration),
+            type: node.type,
+            token: node.token,
+            name: node.name,
+          };
+          if (variable.globalIndex === undefined) throw new LumeError("estado async inválido para declaração local", node.token);
+          this.globalSet(variable.globalIndex);
+          this.scopes[this.scopes.length - 1].set(node.name, variable);
+        } else {
+          const variable = this.lookup(node.name, node.token);
+          if (variable.type !== node.type) throw new LumeError("tipo incompatível ao retomar await", node.token);
+          this.setVariable({ ...variable, name: node.name });
+        }
+        break;
       }
       case "if": {
         const type = this.compileExpression(node.condition);
@@ -545,8 +658,11 @@ class FunctionEmitter {
       case "bool": this.constant("i32", node.value); return "bool";
       case "variable": {
         const variable = this.lookup(node.name, node.token);
-        this.emit(0x20, `local.get $l${variable.index}_${node.name}`); this.code.push(...uleb(variable.index)); return variable.type;
+        if (variable.globalIndex !== undefined) this.globalGet(variable.globalIndex);
+        else { this.emit(0x20, `local.get $l${variable.index}_${node.name}`); this.code.push(...uleb(variable.index)); }
+        return variable.type;
       }
+      case "await": throw new LumeError("await só pode ser usado diretamente em uma declaração, atribuição ou return de async fn main", node.token);
       case "unary": {
         if (node.operator === "-" && node.value.kind === "number" && node.value.type === "i32" && node.value.value === 2147483648) {
           this.constant("i32", -2147483648);
@@ -647,7 +763,7 @@ class FunctionEmitter {
       const variable = this.lookup(node.target.name, node.target.token);
       const actual = this.compileExpression(node.value, variable.type);
       if (actual !== variable.type) throw new LumeError(`não é possível atribuir ${actual} à variável ${variable.type} “${node.target.name}”`, node.token);
-      this.emit(0x21, `local.set $l${variable.index}_${node.target.name}`); this.code.push(...uleb(variable.index));
+      this.setVariable({ ...variable, name: node.target.name });
       return;
     }
     if (node.target.kind === "index") {
@@ -674,7 +790,28 @@ class FunctionEmitter {
     }
     throw new LumeError("o destino da atribuição deve ser uma variável, campo ou elemento de array", node.token);
   }
+  compileHostAsyncCall(node) {
+    const target = this.asyncContext.hostAsyncFunctions.get(node.name);
+    if (!target) throw new LumeError(`“${node.name}” não é uma função host async declarada`, node.token);
+    if (node.args.length !== target.params.length) {
+      throw new LumeError(`“${node.name}” espera ${target.params.length} argumento(s), mas recebeu ${node.args.length}`, node.token);
+    }
+    node.args.forEach((arg, index) => {
+      const expected = target.params[index].type;
+      const actual = this.compileExpression(arg, expected);
+      if (actual !== expected) throw new LumeError(`argumento ${index + 1} de “${node.name}” deve ser ${expected}, não ${actual}`, node.token);
+    });
+    this.call(`async_host_${node.name}`);
+  }
   compileCall(node, expectedType = null) {
+    if (INTRINSICS.has(node.name)) {
+      if (node.args.length !== 1) throw new LumeError(`“${node.name}” espera um argumento f64`, node.token);
+      const actual = this.compileExpression(node.args[0], "f64");
+      if (actual !== "f64") throw new LumeError(`o argumento de “${node.name}” deve ser f64, não ${actual}`, node.token);
+      const [opcode, instruction] = INTRINSICS.get(node.name);
+      this.emit(opcode, instruction);
+      return "f64";
+    }
     if (ARRAY_CONSTRUCTORS.has(node.name)) {
       if (node.args.length !== 1) throw new LumeError(`“${node.name}” espera o tamanho do array`, node.token);
       const elementType = ARRAY_CONSTRUCTORS.get(node.name);
@@ -744,7 +881,35 @@ class FunctionEmitter {
     if (!instruction) throw new LumeError(`operador ${op} não está disponível para ${left}`, node.token);
     this.emit(instruction[0], instruction[1]); return isComparison ? "bool" : left;
   }
+  compileAsyncDispatcher(plan) {
+    for (let index = 0; index < plan.segmentFunctions.length; index++) {
+      this.globalGet(plan.stateGlobal);
+      this.constant("i32", index);
+      this.emit(0x46, "i32.eq");
+      this.emit(0x04, "if"); this.code.push(0x40);
+      this.call(plan.segmentFunctions[index].wasmName);
+      this.emit(0x0f, "return");
+      this.emit(0x0b, "end");
+    }
+    this.globalGet(plan.stateGlobal);
+    this.constant("i32", plan.doneState);
+    this.emit(0x46, "i32.eq");
+    this.emit(0x04, "if"); this.code.push(0x40);
+    this.constant("i32", 1);
+    this.emit(0x0f, "return");
+    this.emit(0x0b, "end");
+    this.emit(0x00, "unreachable");
+  }
   finish() {
+    if (this.asyncContext) {
+      this.constant(this.fn.result, 0);
+      this.globalSet(this.asyncContext.resultGlobal);
+      this.constant("i32", this.asyncContext.doneState);
+      this.globalSet(this.asyncContext.stateGlobal);
+      this.constant("i32", 1);
+      this.emit(0x0b, "end");
+      return { code: this.code, locals: this.locals, wat: this.wat };
+    }
     this.constant(this.fn.result, 0);
     this.emit(0x0b, "end");
     return { code: this.code, locals: this.locals, wat: this.wat };
@@ -769,6 +934,7 @@ function normalizeModulePath(path, parent, token) {
     || path.split("/").some(segment => !segment) || /[:?#]/.test(path)) {
     throw new LumeError("caminho de módulo inválido; use um caminho relativo terminado em .lume", token);
   }
+  if (parent === "main.lume" && /^std\/[a-z][a-z0-9_-]*\.lume$/.test(path)) return path;
   if (parent && !path.startsWith("./") && !path.startsWith("../")) {
     throw new LumeError("imports de módulo devem usar um caminho relativo iniciado em ./ ou ../", token);
   }
@@ -809,6 +975,124 @@ function isKnownType(type, structs) {
   return TYPES.has(type) || structs.has(type) || (element !== null && isKnownType(element, structs));
 }
 
+function containsAwait(node) {
+  if (!node || typeof node !== "object") return false;
+  if (node.kind === "await") return true;
+  return Object.values(node).some(value =>
+    Array.isArray(value) ? value.some(containsAwait) : containsAwait(value));
+}
+
+function lowerAsyncMain(main, hostAsyncFunctions) {
+  const hostFunctions = new Map(hostAsyncFunctions.map(fn => [fn.name, fn]));
+  const localGlobals = new Map();
+  const variables = new Map();
+  const globals = [
+    { type: "i32", name: "state" },
+    { type: "i32", name: "future" },
+    { type: "i32", name: "result" },
+  ];
+  for (const statement of main.body.statements) {
+    if (statement.kind !== "let") continue;
+    const globalIndex = globals.length;
+    localGlobals.set(statement, globalIndex);
+    globals.push({ type: statement.type, name: statement.name });
+  }
+
+  const segments = [];
+  let currentStatements = [];
+  let currentPriorVariables = new Map();
+  const knownVariables = new Map();
+  for (const statement of main.body.statements) {
+    let awaited;
+    if (statement.kind === "let" && statement.value.kind === "await") {
+      awaited = { expression: statement.value, declaration: statement };
+    } else if (statement.kind === "assign_target" && statement.target.kind === "variable" && statement.value.kind === "await") {
+      awaited = { expression: statement.value, assignment: statement };
+    } else if (statement.kind === "return" && statement.value.kind === "await") {
+      awaited = { expression: statement.value, returning: statement };
+    } else if (containsAwait(statement)) {
+      throw new LumeError("nesta versão, await precisa ser o valor direto de let, atribuição ou return no nível principal de async fn main", statement.token);
+    }
+
+    if (!awaited) {
+      currentStatements.push(statement);
+      if (statement.kind === "let") {
+        knownVariables.set(statement.name, {
+          globalIndex: localGlobals.get(statement),
+          type: statement.type,
+          token: statement.token,
+          name: statement.name,
+        });
+      }
+      continue;
+    }
+
+    const call = awaited.expression.value;
+    if (call.kind !== "call") throw new LumeError("await precisa receber uma chamada host async", awaited.expression.token);
+    const hostFunction = hostFunctions.get(call.name);
+    if (!hostFunction) throw new LumeError(`“${call.name}” não é uma função host async declarada`, call.token);
+    let targetType = hostFunction.result;
+    let targetName;
+    let targetToken = statement.token;
+    if (awaited.declaration) {
+      targetName = awaited.declaration.name;
+      targetType = awaited.declaration.type;
+      targetToken = awaited.declaration.token;
+    } else if (awaited.assignment) {
+      targetName = awaited.assignment.target.name;
+      targetToken = awaited.assignment.target.token;
+      const variable = knownVariables.get(targetName);
+      if (!variable) throw new LumeError(`variável “${targetName}” precisa ser declarada antes de await`, targetToken);
+      targetType = variable.type;
+    } else {
+      targetType = main.result;
+    }
+    if (hostFunction.result !== targetType) {
+      throw new LumeError(`await de “${call.name}” retorna ${hostFunction.result}, mas o destino é ${targetType}`, targetToken);
+    }
+    currentStatements.push({
+      kind: "async_start",
+      call,
+      nextState: segments.length + 1,
+      token: awaited.expression.token,
+    });
+    segments.push({ statements: currentStatements, priorVariables: currentPriorVariables });
+    currentStatements = [];
+    currentPriorVariables = new Map(knownVariables);
+    if (awaited.returning) {
+      currentStatements.push({ kind: "async_resume_return", type: targetType, token: targetToken });
+    } else if (awaited.declaration) {
+      currentStatements.push({
+        kind: "async_resume",
+        name: targetName,
+        type: targetType,
+        declaration: awaited.declaration,
+        token: targetToken,
+      });
+      knownVariables.set(targetName, {
+        globalIndex: localGlobals.get(awaited.declaration),
+        type: targetType,
+        token: targetToken,
+        name: targetName,
+      });
+    } else {
+      currentStatements.push({ kind: "async_resume", name: targetName, type: targetType, token: targetToken });
+    }
+  }
+  segments.push({ statements: currentStatements, priorVariables: currentPriorVariables });
+  return {
+    stateGlobal: 0,
+    futureGlobal: 1,
+    resultGlobal: 2,
+    doneState: segments.length,
+    globals,
+    localGlobals,
+    hostAsyncFunctions,
+    segments,
+    hostAsyncFunctions: new Map(hostAsyncFunctions.map(fn => [fn.name, fn])),
+  };
+}
+
 function parseModules(source, options) {
   if (options === null || typeof options !== "object" || Array.isArray(options)) {
     throw new TypeError("as opções de compilação devem ser um objeto");
@@ -821,12 +1105,13 @@ function parseModules(source, options) {
   for (const [path, moduleSource] of Object.entries(providedModules)) {
     const id = normalizeModulePath(path, null);
     if (id === "main.lume") throw new LumeError('o caminho "main.lume" é reservado para o programa principal');
+    if (id.startsWith("std/")) throw new LumeError(`o módulo padrão “${id}” não pode ser substituído`);
     if (sources.has(id)) throw new LumeError(`o módulo “${id}” foi fornecido mais de uma vez`);
     if (typeof moduleSource !== "string" || !moduleSource.trim()) throw new LumeError(`o módulo “${id}” está vazio ou não é texto`);
     sources.set(id, moduleSource);
   }
   if (typeof source !== "string" || !source.trim()) throw new LumeError("o editor está vazio; escreva ou escolha um exemplo");
-  const sourceSize = source.length + [...sources.values()].reduce((total, text) => total + text.length, 0);
+  let sourceSize = source.length + [...sources.values()].reduce((total, text) => total + text.length, 0);
   if (sourceSize > MAX_LUME_SOURCE_UNITS) {
     throw new LumeError(`fontes excedem o limite de ${MAX_LUME_SOURCE_UNITS} unidades de código UTF-16`);
   }
@@ -852,11 +1137,17 @@ function parseModules(source, options) {
         if (error instanceof LumeError && id !== "main.lume") error.modulePath = id;
         throw error;
       }
-      const dependencySource = sources.get(dependency);
+      const dependencySource = sources.get(dependency) ?? STANDARD_MODULES[dependency];
       if (dependencySource === undefined) {
         const error = new LumeError(`o módulo “${dependency}” não foi fornecido na opção modules`, item.token);
         if (id !== "main.lume") error.modulePath = id;
         throw error;
+      }
+      if (!sources.has(dependency) && !visited.has(dependency)) {
+        sourceSize += dependencySource.length;
+        if (sourceSize > MAX_LUME_SOURCE_UNITS) {
+          throw new LumeError(`fontes excedem o limite de ${MAX_LUME_SOURCE_UNITS} unidades de código UTF-16`, item.token);
+        }
       }
       item.moduleId = dependency;
       visit(dependency, dependencySource);
@@ -893,11 +1184,47 @@ function parseModules(source, options) {
       }
     }
   }
+  const hostAsyncFunctions = [];
+  for (const module of modules) {
+    for (const declaration of module.hostAsyncFunctions) {
+      if (module.id !== "main.lume") {
+        throw moduleError("declarações host async só podem aparecer em main.lume", declaration.token, module.id);
+      }
+      if (BUILTINS.some(item => item.name === declaration.name)
+        || ASYNC_BUILTINS.some(item => item.name === declaration.name)
+        || ARRAY_CONSTRUCTORS.has(declaration.name)
+        || INTRINSICS.has(declaration.name)) {
+        throw moduleError(`“${declaration.name}” é um nome reservado`, declaration.token, module.id);
+      }
+      if (hostAsyncFunctions.some(fn => fn.name === declaration.name)) {
+        throw moduleError(`função host async “${declaration.name}” declarada mais de uma vez`, declaration.token, module.id);
+      }
+      const parameterNames = new Set();
+      for (const param of declaration.params) {
+        if (parameterNames.has(param.name)) throw moduleError(`parâmetro “${param.name}” duplicado`, param.token, module.id);
+        if (!TYPES.has(param.type)) {
+          throw moduleError(`tipo “${param.type}” não suportado em parâmetro host async`, param.token, module.id);
+        }
+        parameterNames.add(param.name);
+      }
+      if (!["i32", "f64", "bool", "string"].includes(declaration.result)) {
+        throw moduleError(`tipo “${declaration.result}” não suportado como resultado host async`, declaration.token, module.id);
+      }
+      hostAsyncFunctions.push(declaration);
+    }
+  }
   for (const module of modules) {
     const localFunctions = new Map();
     for (const [functionIndex, fn] of module.functions.entries()) {
-      if (BUILTINS.some(item => item.name === fn.name) || ARRAY_CONSTRUCTORS.has(fn.name)) throw moduleError(`“${fn.name}” é um nome reservado`, fn.token, module.id);
+      if (BUILTINS.some(item => item.name === fn.name)
+        || ASYNC_BUILTINS.some(item => item.name === fn.name)
+        || hostAsyncFunctions.some(hostFn => hostFn.name === fn.name)
+        || ARRAY_CONSTRUCTORS.has(fn.name)
+        || INTRINSICS.has(fn.name)) throw moduleError(`“${fn.name}” é um nome reservado`, fn.token, module.id);
       if (localFunctions.has(fn.name)) throw moduleError(`função “${fn.name}” declarada mais de uma vez no módulo “${module.id}”`, fn.token, module.id);
+      if (fn.asynchronous && (module.id !== "main.lume" || fn.name !== "main")) {
+        throw moduleError("a primeira versão portátil de async fn oferece suporte somente a main", fn.token, module.id);
+      }
       const paramNames = new Set();
       if (!isKnownType(fn.result, structs)) throw moduleError(`tipo de retorno “${fn.result}” não suportado`, fn.token, module.id);
       for (const param of fn.params) {
@@ -920,7 +1247,11 @@ function parseModules(source, options) {
     for (const item of module.imports) {
       const dependencyFunctions = functionsByModule.get(item.moduleId);
       for (const imported of item.names) {
-        if (BUILTINS.some(builtin => builtin.name === imported.local) || ARRAY_CONSTRUCTORS.has(imported.local)) {
+        if (BUILTINS.some(builtin => builtin.name === imported.local)
+          || ASYNC_BUILTINS.some(builtin => builtin.name === imported.local)
+          || hostAsyncFunctions.some(hostFn => hostFn.name === imported.local)
+          || ARRAY_CONSTRUCTORS.has(imported.local)
+          || INTRINSICS.has(imported.local)) {
           throw moduleError(`“${imported.local}” é um nome reservado e não pode ser usado como alias`, imported.token, module.id);
         }
         if (bindings.has(imported.local)) throw moduleError(`nome importado “${imported.local}” já está declarado no módulo “${module.id}”`, imported.token, module.id);
@@ -939,7 +1270,52 @@ function parseModules(source, options) {
   if (!main) throw new LumeError("o programa precisa declarar fn main() -> i32 { ... }");
   if (main.params.length) throw new LumeError("fn main não pode receber parâmetros", main.token);
   if (main.result !== "i32") throw new LumeError("fn main deve retornar i32", main.token);
-  return { functions, rootFunctions: [...rootFunctions.values()], bindingsByFunction, structs };
+  if (hostAsyncFunctions.length && !main.asynchronous) {
+    throw new LumeError("funções host async exigem async fn main", hostAsyncFunctions[0].token);
+  }
+  const mainBindings = bindingsByFunction.get(main);
+  for (const hostFunction of hostAsyncFunctions) {
+    if (mainBindings.has(hostFunction.name)) {
+      throw moduleError(`o nome host async “${hostFunction.name}” já está em uso no módulo principal`, hostFunction.token, "main.lume");
+    }
+  }
+  const asyncPlan = main.asynchronous ? lowerAsyncMain(main, hostAsyncFunctions) : null;
+  if (asyncPlan) {
+    if ([...rootFunctions.keys()].some(name => ["__lume_async_state", "__lume_async_future", "__lume_async_result"].includes(name))) {
+      throw new LumeError("o programa usa um nome reservado pelo runtime async", main.token);
+    }
+    asyncPlan.main = main;
+    asyncPlan.segmentFunctions = asyncPlan.segments.map((segment, index) => {
+      const fn = {
+        name: `__lume_async_step_${index}`,
+        token: main.token,
+        params: [],
+        result: "i32",
+        body: { kind: "block", statements: segment.statements },
+        exported: false,
+        asynchronous: false,
+        moduleId: "main.lume",
+        wasmName: `lume_async_step_${index}`,
+      };
+      fn.asyncSegment = true;
+      segment.function = fn;
+      segment.context = {
+        ...asyncPlan,
+        priorVariables: segment.priorVariables,
+      };
+      functions.push(fn);
+      bindingsByFunction.set(fn, mainBindings);
+      return fn;
+    });
+  }
+  return {
+    functions,
+    rootFunctions: [...rootFunctions.values()],
+    bindingsByFunction,
+    structs,
+    asyncPlan,
+    hostAsyncFunctions,
+  };
 }
 
 function compileProgram(program) {
@@ -948,17 +1324,35 @@ function compileProgram(program) {
     functions.set(fn.wasmName, fn);
   }
   const functionIndices = new Map();
-  BUILTINS.forEach((item, index) => functionIndices.set(item.name, index));
-  program.functions.forEach((fn, index) => functionIndices.set(fn.wasmName, BUILTINS.length + index));
+  const importedFunctions = [
+    ...BUILTINS,
+    ...(program.asyncPlan ? ASYNC_BUILTINS : []),
+    ...program.hostAsyncFunctions.map(fn => ({
+      name: `async_host_${fn.name}`,
+      params: fn.params.map(param => param.type),
+      result: "i32",
+    })),
+  ];
+  importedFunctions.forEach((item, index) => functionIndices.set(item.name, index));
+  program.functions.forEach((fn, index) => functionIndices.set(fn.wasmName, importedFunctions.length + index));
 
   const strings = new StringPool();
   const compiled = program.functions.map(fn => ({
     fn,
-    output: new FunctionEmitter(fn, functions, functionIndices, strings, program.bindingsByFunction.get(fn), program.structs),
+    output: new FunctionEmitter(
+      fn,
+      functions,
+      functionIndices,
+      strings,
+      program.bindingsByFunction.get(fn),
+      program.structs,
+      fn.asyncSegment ? program.asyncPlan.segments.find(segment => segment.function === fn).context : null,
+    ),
   }));
   for (const item of compiled) {
     try {
-      item.output.compileBlock(item.fn.body, false);
+      if (item.fn === program.asyncPlan?.main) item.output.compileAsyncDispatcher(program.asyncPlan);
+      else item.output.compileBlock(item.fn.body, false);
     } catch (error) {
       if (error instanceof LumeError && item.fn.moduleId !== "main.lume") error.modulePath = item.fn.moduleId;
       throw error;
@@ -975,16 +1369,30 @@ function compileProgram(program) {
     }
     return typeIndices.get(key);
   };
-  const importTypeIndices = BUILTINS.map(item => typeIndex(item.params, item.result));
+  const importTypeIndices = importedFunctions.map(item => typeIndex(item.params, item.result));
   const functionTypeIndices = program.functions.map(fn => typeIndex(fn.params.map(param => param.type), fn.result));
   const typeSection = section(1, vector(types.map(type => [0x60, ...vector(type.params.map(param => [wasmTypeCode(param)])), ...vector(type.result ? [[wasmTypeCode(type.result)]] : [])])));
-  const importSection = section(2, vector(BUILTINS.map((item, index) => [...wasmName("host"), ...wasmName(item.name), 0x00, ...uleb(importTypeIndices[index])])));
+  const importSection = section(2, vector(importedFunctions.map((item, index) => [...wasmName("host"), ...wasmName(item.name), 0x00, ...uleb(importTypeIndices[index])])));
   const functionSection = section(3, vector(functionTypeIndices.map(index => uleb(index))));
   const exports = program.rootFunctions.map(fn => [...wasmName(fn.name), 0x00, ...uleb(functionIndices.get(fn.wasmName))]);
   exports.push([...wasmName("memory"), 0x02, ...uleb(0)]);
+  if (program.asyncPlan) {
+    for (const [name, index] of [["__lume_async_state", program.asyncPlan.stateGlobal], ["__lume_async_future", program.asyncPlan.futureGlobal], ["__lume_async_result", program.asyncPlan.resultGlobal]]) {
+      exports.push([...wasmName(name), 0x03, ...uleb(index)]);
+    }
+  }
   const exportSection = section(7, vector(exports));
+  const globalSection = program.asyncPlan
+    ? section(6, vector(program.asyncPlan.globals.map(global => [
+      wasmTypeCode(global.type),
+      0x01,
+      global.type === "f64" ? 0x44 : 0x41,
+      ...(global.type === "f64" ? new Array(8).fill(0) : [0x00]),
+      0x0b,
+    ])))
+    : [];
   const memoryPages = Math.max(1, Math.ceil(strings.bytes.length / 65_536));
-  const memorySection = section(5, [0x01, 0x00, ...uleb(memoryPages)]);
+  const memorySection = section(5, [0x01, 0x01, ...uleb(memoryPages), ...uleb(MAX_WASM_MEMORY_PAGES)]);
   const codeSection = section(10, vector(bodies.map(body => {
     const groups = body.locals.map(local => [1, wasmTypeCode(local.type)]);
     const localBytes = vector(groups);
@@ -994,15 +1402,20 @@ function compileProgram(program) {
   const dataSection = strings.bytes.length
     ? section(11, [0x01, 0x00, 0x41, 0x00, 0x0b, ...uleb(strings.bytes.length), ...strings.bytes])
     : [];
-  const bytes = new Uint8Array([0x00,0x61,0x73,0x6d, 0x01,0x00,0x00,0x00, ...typeSection, ...importSection, ...functionSection, ...memorySection, ...exportSection, ...codeSection, ...dataSection]);
+  const bytes = new Uint8Array([0x00,0x61,0x73,0x6d, 0x01,0x00,0x00,0x00, ...typeSection, ...importSection, ...functionSection, ...memorySection, ...globalSection, ...exportSection, ...codeSection, ...dataSection]);
 
   const watLines = ["(module"];
-  for (const item of BUILTINS) {
+  for (const item of importedFunctions) {
     const params = item.params.map(type => `(param ${watType(type)})`).join(" ");
     const result = item.result ? ` (result ${watType(item.result)})` : "";
     watLines.push(`  (import "host" "${item.name}" (func $${item.name}${params ? ` ${params}` : ""}${result}))`);
   }
-  watLines.push(`  (memory ${memoryPages})`, '  (export "memory" (memory 0))');
+  watLines.push(`  (memory ${memoryPages} ${MAX_WASM_MEMORY_PAGES})`, '  (export "memory" (memory 0))');
+  if (program.asyncPlan) {
+    program.asyncPlan.globals.forEach((global, index) => {
+      watLines.push(`  (global $g${index} (mut ${watType(global.type)}) (${global.type === "f64" ? "f64.const 0" : "i32.const 0"}))`);
+    });
+  }
   for (let i = 0; i < compiled.length; i++) {
     const fn = compiled[i].fn, body = bodies[i];
     const params = fn.params.map((param, index) => `(param $l${index}_${param.name} ${watType(param.type)})`).join(" ");
@@ -1013,11 +1426,24 @@ function compileProgram(program) {
     watLines.push("  )");
   }
   for (const fn of program.rootFunctions) watLines.push(`  (export "${fn.name}" (func $${fn.wasmName}))`);
+  if (program.asyncPlan) {
+    watLines.push('  (export "__lume_async_state" (global $g0))', '  (export "__lume_async_future" (global $g1))', '  (export "__lume_async_result" (global $g2))');
+  }
   if (strings.bytes.length) {
     watLines.push(`  (data (i32.const 0) "${strings.bytes.map(byte => `\\${byte.toString(16).padStart(2, "0")}`).join("")}")`);
   }
   watLines.push(")");
-  return { bytes, wat: watLines.join("\n"), functions: program.rootFunctions.map(fn => fn.name) };
+  return {
+    bytes,
+    wat: watLines.join("\n"),
+    functions: program.rootFunctions.map(fn => fn.name),
+    async: Boolean(program.asyncPlan),
+    hostAsyncFunctions: program.hostAsyncFunctions.map(fn => ({
+      name: fn.name,
+      params: fn.params.map(param => param.type),
+      result: fn.result,
+    })),
+  };
 }
 
 export function compile(source, options = {}) {
