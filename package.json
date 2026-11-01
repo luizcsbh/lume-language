@@ -1,0 +1,36 @@
+{
+  "name": "@luizcsbh/lume-language",
+  "version": "0.1.0",
+  "description": "Experimental Lume language compiler and WebAssembly runtime",
+  "license": "MIT",
+  "homepage": "https://luizcsbh.github.io/lume-language/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luizcsbh/lume-language.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./compiler": "./src/compiler.js"
+  },
+  "files": [
+    "src/compiler.js",
+    "src/index.js",
+    "src/runtime.js",
+    "LICENSE",
+    "README.md",
+    "README.pt-BR.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "start": "python3 -m http.server 3000 --bind 0.0.0.0",
+    "build:pages": "node scripts/build-pages.mjs",
+    "test": "node --test"
+  }
+}

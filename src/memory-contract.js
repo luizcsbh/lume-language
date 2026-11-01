@@ -1,0 +1,6 @@
+export const MEMORY_CELL_BYTES = 4;
+export const MEMORY_INITIAL_BYTES = 64 * 1024;
+export const MEMORY_MAX_BYTES = 16 * 1024 * 1024;
+export const MEMORY_MAX_CELLS = MEMORY_MAX_BYTES / MEMORY_CELL_BYTES;
+export const MEMORY_MAX_LIVE_BLOCKS = 16_384;
+export const MEMORY_MAX_HANDLE = 0x7fffffff;

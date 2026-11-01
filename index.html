@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101210">
+  <meta name="description" content="Lume: um playground experimental para aprender uma sintaxe simples e compilar programas para WebAssembly no navegador.">
+  <title>Lume — código leve, ideias rápidas</title>
+  <link rel="icon" href="./logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#inicio" aria-label="Lume, início">
+        <img src="./logo.svg" width="34" height="34" alt="">
+        <span class="brand-name">lume<span class="brand-period">.</span></span>
+        <span class="brand-tag">WEBASSEMBLY PLAYGROUND</span>
+      </a>
+      <div class="topbar-right">
+        <span class="runtime-chip"><span class="pulse-dot"></span> roda no navegador</span>
+        <a class="docs-link" href="./localizacao.html">Localização com Lume <span aria-hidden="true">↗</span></a>
+      </div>
+    </header>
+
+    <main id="inicio">
+      <section class="intro" aria-labelledby="headline">
+        <div class="intro-copy">
+          <p class="eyebrow"><span class="eyebrow-mark">01</span> UM EXPERIMENTO COM WEBASSEMBLY</p>
+          <h1 id="headline">Código leve.<br><span class="headline-accent">Ideias rápidas.</span></h1>
+          <p class="intro-text">Lume é uma linguagem experimental com sintaxe direta e compilação para WebAssembly. Escreva, compile e veja o código rodar — sem sair do navegador.</p>
+        </div>
+        <div class="intro-note"><span class="note-rule"></span><p>Um protótipo para explorar<br>uma ideia, não um substituto<br>universal para JavaScript.</p></div>
+      </section>
+
+      <section class="playground" aria-label="Playground de código Lume">
+        <div class="workspace-bar">
+          <div class="file-label"><span class="file-glyph">◈</span><span>experimento.lume</span><span class="unsaved-dot" id="unsaved-dot" hidden></span></div>
+          <div class="bar-center"><span class="tiny-wasm">WASM</span><span id="status-label" class="status-label">pronto para compilar</span></div>
+          <div class="bar-actions">
+            <button class="button button-quiet" id="compile-button" type="button" title="Compilar código (Ctrl/⌘ + Enter)"><span class="button-icon">⌘</span> Compilar</button>
+            <button class="button button-run" id="run-button" type="button" title="Compilar e executar"><span class="play-icon" aria-hidden="true">▶</span> Executar</button>
+            <button class="button button-stop" id="stop-button" type="button" disabled title="Interromper a execução">Interromper</button>
+          </div>
+        </div>
+
+        <div class="workbench">
+          <section class="editor-panel" aria-label="Editor de código">
+            <div class="panel-heading"><div><span class="section-index">A /</span><h2>Editor</h2></div>
+              <label class="example-select-label" for="example-select">Exemplo
+                <select id="example-select" aria-label="Selecionar exemplo">
+                  <option value="dots">Pontos & entrada</option>
+                  <option value="click">Eventos de clique</option>
+                  <option value="math">Funções & cálculo</option>
+                  <option value="dom">DOM em lote</option>
+                  <option value="memory">Memória por handles</option>
+                </select>
+              </label>
+            </div>
+            <div class="editor-frame">
+              <div class="line-numbers" id="line-numbers" aria-hidden="true"></div>
+              <div class="code-viewport" id="code-viewport"><pre class="syntax-layer" id="syntax-layer" aria-hidden="true"></pre>
+                <textarea id="code-editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" aria-label="Código-fonte Lume" aria-describedby="editor-hint"></textarea>
+              </div>
+            </div>
+            <div class="editor-footer"><span id="editor-hint">Lume · sintaxe experimental</span><span><kbd>Tab</kbd> indenta <span class="footer-separator">·</span> <kbd>⌘</kbd>/<kbd>Ctrl</kbd> <kbd>↵</kbd> executa</span></div>
+          </section>
+
+          <section class="output-panel" aria-label="Saída do programa">
+            <div class="panel-heading output-heading"><div><span class="section-index">B /</span><h2>Resultado</h2></div>
+              <span class="wasm-state"><span class="wasm-state-dot" id="wasm-state-dot"></span><span id="wasm-state-text">aguardando WASM</span></span>
+            </div>
+            <div class="canvas-stage">
+              <div class="stage-meta"><span><span class="stage-light"></span> BROWSER CANVAS</span><span>640 × 360</span></div>
+              <canvas id="output-canvas" width="640" height="360" aria-label="Canvas de saída do programa Lume"></canvas>
+              <div class="canvas-empty" id="canvas-empty"><span class="empty-cross">＋</span><span>Compile e execute<br>para ver o resultado.</span></div>
+              <div class="result-pill" id="result-pill" hidden><span>DOM</span><strong id="result-value">—</strong></div>
+            </div>
+            <div class="input-strip"><label for="input-slider"><span>ENTRADA DO DOM</span><span>quantidade <strong id="input-value">28</strong></span></label><input id="input-slider" type="range" min="4" max="72" value="28" aria-label="Quantidade de pontos"></div>
+            <div class="console-wrap">
+              <div class="console-heading"><span><span class="console-prompt">›_</span> CONSOLE</span><button type="button" class="clear-console" id="clear-console">limpar</button></div>
+              <div class="console-output" id="console-output" role="log" aria-live="polite"><p class="console-placeholder">A saída do programa aparece aqui.</p></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="inspector">
+          <div class="inspector-title"><span class="section-index">C /</span><h2>Inspeção</h2></div>
+          <div class="inspector-stats">
+            <div class="stat-cell"><span>COMPILAÇÃO</span><strong id="compile-time">—</strong><small>análise + geração WASM</small></div>
+            <div class="stat-cell"><span>EXECUÇÃO</span><strong id="execution-time">—</strong><small>Worker; interface responsiva</small></div>
+            <div class="stat-cell"><span>FORMATO</span><strong class="stat-format">.wasm</strong><small id="module-size">módulo ainda não gerado</small></div>
+          </div>
+          <details class="wat-details" id="wat-details"><summary><span>Ver representação WebAssembly Text</span><span class="summary-arrow">＋</span></summary><pre id="wat-output" class="wat-output">;; Compile o programa para inspecionar o módulo.</pre></details>
+        </div>
+      </section>
+
+      <section class="guide" id="guia" aria-labelledby="guide-title">
+        <div class="guide-heading"><p class="eyebrow"><span class="eyebrow-mark">02</span> PRIMEIROS PASSOS</p><h2 id="guide-title">Pequena por fora.<br><span class="headline-accent">WebAssembly por dentro.</span></h2></div>
+        <div class="guide-content">
+          <p class="guide-lede">A Lume é um protótipo de linguagem compilada para este playground. O compilador converte uma pequena sintaxe diretamente em um módulo WASM binário — sem bibliotecas de compilação externas. Inclui um heap numérico controlado pelo host, com limite por execução.</p>
+          <div class="guide-columns">
+            <article><span class="guide-number">01</span><h3>Escreva</h3><p>Use <code>fn</code> para funções, <code>let</code> para variáveis e tipos explícitos como <code>i32</code>, <code>f64</code> e <code>bool</code>.</p><pre class="guide-code">fn soma(a: i32, b: i32) -&gt; i32 {
+  return a + b;
+}</pre></article>
+            <article><span class="guide-number">02</span><h3>Compile</h3><p>Um analisador léxico e sintático transforma o programa em instruções WebAssembly. Erros apontam linha e coluna.</p><pre class="guide-code">let ativo: bool = true;
+let pi: f64 = 3.14;
+if ativo { print_f64(pi); }</pre></article>
+            <article><span class="guide-number">03</span><h3>Conecte</h3><p>A API DOM tipada aceita apenas alvos registrados e agrupa escritas sem interpretar HTML.</p><pre class="guide-code">fn main() -&gt; i32 {
+  dom_set_i32(1, 42);
+  dom_set_visible(3, true);
+  return 42;
+}</pre></article>
+          </div>
+          <div class="limits-note"><span>NOTA DE ESCOPO</span><p>O heap aceita somente células i32 por handles — sem ponteiros ou exposição de páginas de memória. Começa em 64 KiB, cresce até 16 MiB e limita blocos vivos a 16.384; alocações são zeradas, podem ser compactadas e são liberadas ao encerrar a execução. A API DOM limita escrita a alvos registrados e usa textContent. Isso reduz a superfície de injeção, mas Worker e WebAssembly não são uma sandbox para código hostil; execute somente programas confiáveis. Desempenho varia por tarefa: WASM não é automaticamente mais rápido que JavaScript.</p></div>
+        </div>
+      </section>
+    </main>
+    <footer class="footer"><a class="footer-brand" href="#inicio"><img src="./logo.svg" width="22" height="22" alt=""> LUME<span>.</span></a><span>Um experimento aberto para a web.</span><a href="#guia">Sintaxe & compilação ↑</a></footer>
+  </div>
+  <script type="module" src="./src/app.js?v=lume-dom-20261101-r1"></script>
+</body>
+</html>

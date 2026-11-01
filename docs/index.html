@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101210">
+  <meta name="description" content="Lume é uma linguagem experimental de sintaxe simples que compila para WebAssembly no navegador. Explore o playground e baixe o código-fonte.">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; script-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; upgrade-insecure-requests">
+  <link rel="canonical" href="https://luizcsbh.github.io/lume-language/">
+  <link rel="alternate" hreflang="pt-BR" href="https://luizcsbh.github.io/lume-language/">
+  <link rel="alternate" hreflang="en" href="https://luizcsbh.github.io/lume-language/en/">
+  <link rel="alternate" hreflang="es" href="https://luizcsbh.github.io/lume-language/es/">
+  <link rel="alternate" hreflang="x-default" href="https://luizcsbh.github.io/lume-language/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Lume">
+  <meta property="og:title" content="Lume — código claro, execução WASM">
+  <meta property="og:description" content="Uma linguagem experimental que compila para WebAssembly no navegador. Explore, leia o código e baixe o protótipo.">
+  <meta property="og:url" content="https://luizcsbh.github.io/lume-language/">
+  <meta property="og:image" content="https://luizcsbh.github.io/lume-language/logo.svg">
+  <meta property="og:image:alt" content="Símbolo verde do Lume">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Lume — código claro, execução WASM">
+  <meta name="twitter:description" content="Uma linguagem experimental que compila para WebAssembly no navegador.">
+  <link rel="icon" href="./logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css?v=67b480e">
+  <title>Lume — código claro, execução WASM</title>
+</head>
+<body>
+  <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+  <header class="topbar">
+    <a class="brand" href="#inicio" aria-label="Lume, início">
+      <img src="./logo.svg" width="34" height="34" alt="">
+      <span>lume<span class="period">.</span></span>
+      <span class="brand-tag">LINGUAGEM EXPERIMENTAL</span>
+    </a>
+    <div class="header-tools">
+      <nav class="language-nav" aria-label="Selecione o idioma">
+        <a href="./" lang="pt-BR" aria-current="page" aria-label="Português, idioma atual" title="Português">PT</a>
+        <a href="./en/" lang="en" aria-label="English" title="English">EN</a>
+        <a href="./es/" lang="es" aria-label="Español" title="Español">ES</a>
+      </nav>
+      <a class="repo-link" href="https://github.com/luizcsbh/lume-language">Código no GitHub <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+
+  <main id="conteudo">
+    <section class="hero" id="inicio" aria-labelledby="headline">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="signal" aria-hidden="true"></span> UM EXPERIMENTO PARA A WEB</p>
+        <h1 id="headline">Código claro.<br><span>Execução no navegador.</span></h1>
+        <p class="lede">Lume é uma linguagem de sintaxe simples que compila programas para WebAssembly. Explore o protótipo, leia o código e teste os exemplos no navegador.</p>
+        <div class="actions">
+          <a class="button button-primary" href="https://github.com/luizcsbh/lume-language/archive/refs/heads/main.zip">
+            <span aria-hidden="true">↓</span> Baixar código-fonte (.zip)
+          </a>
+          <a class="button button-secondary" href="./playground/">Abrir playground <span aria-hidden="true">↗</span></a>
+        </div>
+        <p class="download-note">Snapshot da branch <code>main</code>. Não é um instalador nativo.</p>
+      </div>
+      <aside class="hero-note" aria-label="Estado do projeto">
+        <span class="note-kicker">STATUS / 01</span>
+        <strong>Protótipo aberto</strong>
+        <p>Compilador JavaScript sem dependências externas, saída WebAssembly e uma ponte controlada para APIs do navegador.</p>
+        <span class="note-rule" aria-hidden="true"></span>
+        <p class="note-small">WASM → Worker → DOM tipado</p>
+      </aside>
+    </section>
+
+    <section class="details" aria-label="Sobre o protótipo">
+      <article class="detail-card">
+        <span class="card-index">01 / EXPERIMENTE</span>
+        <h2>Rode localmente</h2>
+        <p>Extraia o ZIP e, na pasta do projeto, inicie um servidor HTTP local com Python 3. Não é preciso instalar pacotes npm.</p>
+        <pre><code>unzip lume-language-main.zip
+cd lume-language-main
+python3 -m http.server 8000</code></pre>
+        <p>Depois abra <code>http://localhost:8000</code>. Use um navegador moderno com suporte a WebAssembly e Web Workers.</p>
+      </article>
+      <article class="detail-card">
+        <span class="card-index">02 / EXPLORE</span>
+        <h2>Uma linguagem pequena</h2>
+        <p>O protótipo inclui funções, variáveis, condições, laços, tipos <code>i32</code>, <code>f64</code> e <code>bool</code>, exemplos de Canvas e uma API DOM de alvos registrados.</p>
+        <p>O heap experimental armazena células <code>i32</code> sob handles opacos. Não oferece strings, ponteiros brutos ou acesso direto à memória WASM.</p>
+      </article>
+      <article class="detail-card security-card">
+        <span class="card-index">03 / LEIA ANTES</span>
+        <h2>Limites e segurança</h2>
+        <p>WebAssembly e Web Workers não são, por si só, uma sandbox para código hostil. Execute somente programas que você entende e controla; código pode consumir CPU até a execução ser interrompida.</p>
+        <p>A revisão e os limites implementados reduzem riscos conhecidos, mas não garantem ausência de vulnerabilidades. WASM também não é automaticamente mais rápido que JavaScript.</p>
+        <p><a class="report-link" href="https://github.com/luizcsbh/lume-language/blob/main/SECURITY_REVIEW.pt-BR.md">Leia a revisão de segurança em português ↗</a></p>
+      </article>
+    </section>
+
+    <section class="details" aria-label="Primeiros passos e uso do Lume">
+      <article class="detail-card">
+        <span class="card-index">04 / PRIMEIROS PASSOS</span>
+        <h2>Comece a usar o Lume</h2>
+        <p>Abra o <a href="./playground/">playground deste repositório</a> ou rode o projeto localmente. No editor, escolha um exemplo ou escreva seu programa; clique em <strong>Compilar</strong> para validar e em <strong>Executar</strong> para rodar no navegador.</p>
+        <p>Para rodar localmente, baixe o código-fonte, inicie o servidor na pasta do projeto e abra o endereço local:</p>
+        <pre><code>python3 -m http.server 8000</code></pre>
+        <p>Depois, abra <code>http://localhost:8000</code> no navegador.</p>
+      </article>
+      <article class="detail-card">
+        <span class="card-index">05 / HELLO WORLD, LUME</span>
+        <h2>Seu primeiro programa</h2>
+        <pre><code>fn main() -&gt; i32 {
+  print_i32(42);
+  return 0;
+}</code></pre>
+        <p>Cole o código no editor e clique em <strong>Executar</strong>. O console mostrará <code>42</code>. A linguagem ainda não oferece strings; por isso, este exemplo usa a saída numérica disponível.</p>
+      </article>
+      <article class="detail-card">
+        <span class="card-index">06 / NO SEU PROJETO</span>
+        <h2>Como adicionar o Lume</h2>
+        <p>O Lume ainda não é um pacote npm nem um runtime pronto para instalar em outro app. Use o repositório como ponto de partida: adapte o compilador em <code>src/compiler.js</code>, o Worker em <code>src/worker.js</code> e forneça no host JavaScript as funções importadas pelo programa.</p>
+        <p>Para experimentar sem integração, use o playground deste projeto. Não basta adicionar uma tag <code>&lt;script&gt;</code>: a execução depende do compilador, do Web Worker e das importações de host.</p>
+      </article>
+    </section>
+
+    <section class="license-note" aria-label="Informação sobre licença">
+      <span class="license-mark" aria-hidden="true">i</span>
+      <p><strong>Licença MIT.</strong> Este projeto está licenciado sob a <a href="./LICENSE">MIT License</a>, permitindo uso, cópia, modificação e redistribuição com as condições da licença.</p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <a class="footer-brand" href="#inicio"><img src="./logo.svg" width="22" height="22" alt=""> LUME<span>.</span></a>
+    <span>Um protótipo para aprender e experimentar.</span>
+    <a href="https://github.com/luizcsbh/lume-language">Ver repositório ↗</a>
+  </footer>
+</body>
+</html>
