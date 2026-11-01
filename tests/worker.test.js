@@ -1,5 +1,6 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
+import { EXAMPLES } from "../src/examples.js";
 
 const messages = [];
 const workerScope = {
@@ -45,6 +46,30 @@ test("compila e executa imports de módulos no Worker", async () => {
   );
   assert.equal(result.find(message => message.type === "done")?.returnValue, 42);
   assert.equal(result.some(message => message.type === "error"), false);
+});
+
+test("executa o exemplo visual de arrays e structs no heap do Worker", async () => {
+  const result = await run(EXAMPLES.arrays);
+  assert.equal(result.find(message => message.type === "done")?.returnValue, 42);
+  assert.deepEqual(result.filter(message => message.type === "output").map(message => message.text), [
+    "Quantidade de valores: 3",
+    "4",
+  ]);
+  assert.equal(result.find(message => message.type === "memory-stats")?.stats.usedBytes, 44);
+  assert.equal(result.some(message => message.type === "error"), false);
+});
+
+test("reporta índices fora dos limites como falha de execução", async () => {
+  const result = await run("fn main() -> i32 { let values: array<i32> = [1]; return values[1]; }");
+  assert.equal(result.some(message => message.type === "done"), false);
+  assert.match(result.find(message => message.type === "error")?.message ?? "", /índice fora dos limites/);
+});
+
+test("rejeita índice f64 negativo antes de calcular o deslocamento físico", async () => {
+  const result = await run("fn main() -> i32 { let values: array<f64> = [1.5]; print_f64(values[-2147483648]); return 0; }");
+  assert.equal(result.some(message => message.type === "done"), false);
+  assert.match(result.find(message => message.type === "error")?.message ?? "", /índice fora dos limites/);
+  assert.equal(result.some(message => message.type === "output"), false);
 });
 
 test("print concatena texto com números inteiros e decimais em uma linha", async () => {

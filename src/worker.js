@@ -1,13 +1,8 @@
-import { compile } from "./compiler.js?v=lume-modules-20261101-r1";
+import { compile } from "./compiler.js?v=lume-aggregates-20261101-r1";
+import { createMemoryHost } from "./memory-host.js";
 import { MAX_DOM_OPERATIONS } from "./dom-contract.js?v=lume-dom-20261101-r1";
 import { MemoryRepository } from "./memory-repository.js";
 import { MemoryService } from "./memory-service.js";
-import {
-  AllocateI32Request,
-  FreeMemoryRequest,
-  LoadI32Request,
-  StoreI32Request,
-} from "./memory-requests.js";
 
 const MAX_HOST_EFFECTS = 4096;
 let compiledModule = null;
@@ -57,6 +52,7 @@ function flushDom() {
 }
 function createImports(memoryService) {
   return { host: {
+    ...createMemoryHost(memoryService),
     print_i32(value) { consumeHostEffect(); post("output", { text: String(value | 0) }); },
     print_f64(value) { consumeHostEffect(); post("output", { text: Number(value).toString() }); },
     print_string(pointer) { consumeHostEffect(); post("output", { text: decodeString(pointer) }); },
@@ -90,10 +86,6 @@ function createImports(memoryService) {
       clickListening = true;
       post("listen-click");
     },
-    memory_alloc_i32(cells) { return memoryService.allocate(new AllocateI32Request(cells)); },
-    memory_load_i32(handle, index) { return memoryService.load(new LoadI32Request(handle, index)); },
-    memory_store_i32(handle, index, value) { memoryService.store(new StoreI32Request(handle, index, value)); },
-    memory_free(handle) { memoryService.free(new FreeMemoryRequest(handle)); },
   } };
 }
 async function compileSource(source, modules) {

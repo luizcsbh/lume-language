@@ -103,7 +103,17 @@ export class MemoryRepository {
     return block;
   }
 
-  allocate(cells) {
+  allocate(cells) { return this.#allocate(cells, cells); }
+
+  allocateArray(cells, width = 1) {
+    if (!Number.isSafeInteger(cells) || cells < 0 || !isPositiveInteger(width)
+      || cells > MEMORY_MAX_CELLS / width) {
+      throw new RangeError("tamanho de array Lume inválido");
+    }
+    return this.#allocate(Math.max(1, cells * width), cells * width);
+  }
+
+  #allocate(cells, logicalLength) {
     this.#assertOpen();
     if (!isPositiveInteger(cells) || cells > MEMORY_MAX_CELLS) {
       throw new RangeError(`alocação deve pedir de 1 a ${MEMORY_MAX_CELLS} células i32`);
@@ -131,7 +141,7 @@ export class MemoryRepository {
     if (range.length === 0) this.#freeRanges.splice(rangeIndex, 1);
 
     const handle = this.#nextHandle++;
-    this.#blocks.set(handle, { start, length: cells });
+    this.#blocks.set(handle, { start, length: cells, logicalLength });
     this.#cells.fill(0, start, start + cells);
     this.#usedCells += cells;
     return handle;
@@ -140,7 +150,7 @@ export class MemoryRepository {
   loadI32(handle, index) {
     this.#assertOpen();
     const block = this.#requireBlock(handle);
-    if (!Number.isSafeInteger(index) || index < 0 || index >= block.length) {
+    if (!Number.isSafeInteger(index) || index < 0 || index >= block.logicalLength) {
       throw new RangeError("índice fora dos limites do bloco Lume");
     }
     return this.#cells[block.start + index];
@@ -149,11 +159,49 @@ export class MemoryRepository {
   storeI32(handle, index, value) {
     this.#assertOpen();
     const block = this.#requireBlock(handle);
-    if (!Number.isSafeInteger(index) || index < 0 || index >= block.length) {
+    if (!Number.isSafeInteger(index) || index < 0 || index >= block.logicalLength) {
       throw new RangeError("índice fora dos limites do bloco Lume");
     }
     if (!isI32(value)) throw new RangeError("valor deve ser um inteiro i32 válido");
     this.#cells[block.start + index] = value;
+  }
+
+  loadF64(handle, index) {
+    this.#assertOpen();
+    const block = this.#requireBlock(handle);
+    if (!Number.isSafeInteger(index) || index < 0 || index + 2 > block.logicalLength) {
+      throw new RangeError("índice fora dos limites do bloco Lume");
+    }
+    return new DataView(this.#buffer).getFloat64((block.start + index) * MEMORY_CELL_BYTES, true);
+  }
+
+  storeF64(handle, index, value) {
+    this.#assertOpen();
+    const block = this.#requireBlock(handle);
+    if (!Number.isSafeInteger(index) || index < 0 || index + 2 > block.logicalLength) {
+      throw new RangeError("índice fora dos limites do bloco Lume");
+    }
+    if (typeof value !== "number") throw new TypeError("valor deve ser um número f64");
+    new DataView(this.#buffer).setFloat64((block.start + index) * MEMORY_CELL_BYTES, value, true);
+  }
+
+  length(handle, stride = 1) {
+    this.#assertOpen();
+    const block = this.#requireBlock(handle);
+    if (!isPositiveInteger(stride) || block.logicalLength % stride !== 0) {
+      throw new RangeError("stride inválido para o bloco Lume");
+    }
+    return block.logicalLength / stride;
+  }
+
+  arrayOffset(handle, index, stride) {
+    this.#assertOpen();
+    const block = this.#requireBlock(handle);
+    if (!isPositiveInteger(stride) || block.logicalLength % stride !== 0
+      || !Number.isSafeInteger(index) || index < 0 || index >= block.logicalLength / stride) {
+      throw new RangeError("índice fora dos limites do array Lume");
+    }
+    return index * stride;
   }
 
   free(handle) {

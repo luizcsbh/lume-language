@@ -80,8 +80,8 @@ python3 -m http.server 8000</code></pre>
       <article class="detail-card">
         <span class="card-index">02 / EXPLORA</span>
         <h2>Un lenguaje pequeño</h2>
-        <p>El prototipo incluye funciones, variables, condicionales, bucles, tipos <code>i32</code>, <code>f64</code> y <code>bool</code>, ejemplos de Canvas y una API DOM con destinos registrados.</p>
-        <p>El heap experimental almacena celdas <code>i32</code> mediante handles opacos. No ofrece cadenas, punteros sin procesar ni acceso directo a la memoria WASM.</p>
+        <p>El prototipo incluye funciones, variables, condicionales, bucles, tipos <code>i32</code>, <code>f64</code>, <code>bool</code> y <code>string</code>, arrays y structs en el heap administrado, ejemplos de Canvas y una API DOM con destinos registrados.</p>
+        <p>El heap usa handles opacos y libera las asignaciones al terminar la ejecución. No ofrece punteros sin procesar ni acceso directo a la memoria WASM.</p>
       </article>
       <article class="detail-card security-card">
         <span class="card-index">03 / LEE ANTES</span>

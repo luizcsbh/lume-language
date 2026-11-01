@@ -80,8 +80,8 @@ python3 -m http.server 8000</code></pre>
       <article class="detail-card">
         <span class="card-index">02 / EXPLORE</span>
         <h2>A small language</h2>
-        <p>The prototype includes functions, variables, conditionals, loops, <code>i32</code>, <code>f64</code>, and <code>bool</code> types, Canvas examples, and a DOM API with registered targets.</p>
-        <p>The experimental heap stores <code>i32</code> cells behind opaque handles. It does not provide strings, raw pointers, or direct access to WASM memory.</p>
+        <p>The prototype includes functions, variables, conditionals, loops, <code>i32</code>, <code>f64</code>, <code>bool</code>, and <code>string</code> types, managed arrays and structs, Canvas examples, and a DOM API with registered targets.</p>
+        <p>The heap uses opaque handles and releases allocations when execution ends. It does not provide raw pointers or direct access to WASM memory.</p>
       </article>
       <article class="detail-card security-card">
         <span class="card-index">03 / READ FIRST</span>

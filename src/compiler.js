@@ -14,11 +14,22 @@ const BUILTINS = [
   { name: "memory_alloc_i32", params: ["i32"], result: "i32" },
   { name: "memory_load_i32", params: ["i32", "i32"], result: "i32" },
   { name: "memory_store_i32", params: ["i32", "i32", "i32"], result: null },
+  { name: "memory_load_f64", params: ["i32", "i32"], result: "f64" },
+  { name: "memory_store_f64", params: ["i32", "i32", "f64"], result: null },
+  { name: "memory_length", params: ["i32", "i32"], result: "i32" },
+  { name: "memory_array_offset", params: ["i32", "i32", "i32"], result: "i32" },
+  { name: "array_allocate_i32", params: ["i32"], result: "i32" },
+  { name: "array_allocate_f64", params: ["i32"], result: "i32" },
+  { name: "array_allocate_ref", params: ["i32"], result: "i32" },
   { name: "memory_free", params: ["i32"], result: null },
 ];
 const TYPES = new Set(["i32", "f64", "bool", "string"]);
 const WASM_TYPE = { i32: 0x7f, f64: 0x7c, bool: 0x7f, string: 0x7f };
-const KEYWORDS = new Set(["fn", "let", "return", "if", "else", "while", "true", "false", "import", "from", "as", "export"]);
+const ARRAY_CONSTRUCTORS = new Map([
+  ["array_i32", "i32"], ["array_f64", "f64"], ["array_bool", "bool"], ["array_string", "string"],
+  ["array_ref", "ref"],
+]);
+const KEYWORDS = new Set(["fn", "let", "return", "if", "else", "while", "true", "false", "import", "from", "as", "export", "struct"]);
 export const MAX_LUME_SOURCE_UNITS = 65_536;
 export const MAX_LUME_PARSE_DEPTH = 128;
 
@@ -118,7 +129,7 @@ class Lexer {
       if (["->", "==", "!=", "<=", ">=", "&&", "||"].includes(pair)) {
         this.advance(); this.advance(); this.add("symbol", pair, line, column); continue;
       }
-      if ("+-*/%<>=!(){}:;,".includes(char)) {
+      if ("+-*/%<>=!(){}:;,[].".includes(char)) {
         this.advance(); this.add("symbol", char, line, column); continue;
       }
       if (char === '"' || char === "'") { this.string(line, column, char); continue; }
@@ -130,7 +141,12 @@ class Lexer {
 }
 
 class Parser {
-  constructor(tokens) { this.tokens = tokens; this.position = 0; this.depth = 0; }
+  constructor(tokens) {
+    this.tokens = tokens;
+    this.position = 0;
+    this.depth = 0;
+    this.structNames = new Set();
+  }
   withDepth(token, parse) {
     this.depth++;
     if (this.depth > MAX_LUME_PARSE_DEPTH) {
@@ -152,26 +168,60 @@ class Parser {
     return this.tokens[this.position++];
   }
   parseType() {
-    const token = this.expectName("esperado tipo i32, f64, bool ou string");
-    if (!TYPES.has(token.value)) throw new LumeError(`tipo “${token.value}” não suportado; use i32, f64, bool ou string`, token);
-    return token.value;
+    return this.withDepth(this.current(), () => {
+      const token = this.expectName("esperado tipo i32, f64, bool ou string");
+      if (token.value === "array") {
+        this.expect("<", "esperado < depois de array");
+        const elementType = this.parseType();
+        this.expect(">", "esperado > depois do tipo do array");
+        return `array<${elementType}>`;
+      }
+      return token.value;
+    });
   }
   parse() {
     const functions = [];
     const imports = [];
+    const structs = [];
     let declarationsStarted = false;
+    let functionsStarted = false;
     while (this.current().kind !== "eof") {
       if (this.match("import")) {
-        if (declarationsStarted) throw new LumeError("imports devem aparecer antes das funções", this.previous());
+        if (declarationsStarted) throw new LumeError("imports devem aparecer antes dos tipos e funções", this.previous());
         imports.push(this.importDeclaration());
+      } else if (this.match("struct")) {
+        if (functionsStarted) throw new LumeError("structs devem ser declaradas antes das funções", this.previous());
+        declarationsStarted = true;
+        const declaration = this.structDeclaration();
+        if (this.structNames.has(declaration.name)) throw new LumeError(`struct “${declaration.name}” declarada mais de uma vez`, declaration.token);
+        this.structNames.add(declaration.name);
+        structs.push(declaration);
       } else {
         declarationsStarted = true;
+        functionsStarted = true;
         const exported = this.match("export");
         functions.push(this.functionDeclaration(exported));
       }
     }
     if (!functions.length) throw new LumeError("escreva pelo menos uma função, por exemplo fn main() -> i32 { return 0; }");
-    return { functions, imports };
+    return { functions, imports, structs };
+  }
+  structDeclaration() {
+    const name = this.expectName("esperado o nome da struct");
+    this.expect("{", "esperado { depois do nome da struct");
+    const fields = [];
+    const fieldNames = new Set();
+    while (!this.at("}") && this.current().kind !== "eof") {
+      const field = this.expectName("esperado o nome do campo");
+      if (fieldNames.has(field.value)) throw new LumeError(`campo “${field.value}” duplicado`, field);
+      fieldNames.add(field.value);
+      this.expect(":", "informe o tipo do campo depois de :");
+      fields.push({ name: field.value, type: this.parseType(), token: field });
+      if (!this.match(",")) break;
+    }
+    if (!fields.length) throw new LumeError("uma struct deve declarar pelo menos um campo", name);
+    this.expect("}", "struct não foi fechada com }");
+    return { name: name.value, token: name, fields };
   }
   importDeclaration() {
     const token = this.previous();
@@ -247,12 +297,12 @@ class Parser {
       const condition = this.parenthesizedExpression();
       return { kind: "while", condition, body: this.block(), token };
     }
-    if (this.current().kind === "identifier" && this.tokens[this.position + 1]?.value === "=") {
-      const name = this.tokens[this.position++]; this.expect("=");
-      const value = this.expression(); this.expect(";", "termine a atribuição com ;");
-      return { kind: "assign", name: name.value, value, token: name };
-    }
     const value = this.expression();
+    if (this.match("=")) {
+      const assigned = this.expression();
+      this.expect(";", "termine a atribuição com ;");
+      return { kind: "assign_target", target: value, value: assigned, token: value.token };
+    }
     this.expect(";", "termine a instrução com ;");
     return { kind: "expression", value };
   }
@@ -276,29 +326,66 @@ class Parser {
       const token = this.tokens[this.position++];
       return { kind: "unary", operator: token.value, value: this.prefix(), token };
     }
-    if (this.match("(")) { const value = this.expression(); this.expect(")"); return value; }
+    if (this.match("(")) { const value = this.expression(); this.expect(")"); return this.postfix(value); }
     const token = this.current();
     if (token.kind === "number") {
       this.position++;
       const value = Number(token.value);
       if (!Number.isFinite(value)) throw new LumeError("literal numérico fora do intervalo", token);
-      return { kind: "number", value, type: /[.eE]/.test(token.value) ? "f64" : "i32", token };
+      return this.postfix({ kind: "number", value, type: /[.eE]/.test(token.value) ? "f64" : "i32", token });
     }
     if (token.kind === "string") {
       this.position++;
-      return { kind: "string", value: token.value, token };
+      return this.postfix({ kind: "string", value: token.value, token });
     }
-    if (this.match("true")) return { kind: "bool", value: 1, type: "bool", token };
-    if (this.match("false")) return { kind: "bool", value: 0, type: "bool", token };
+    if (this.match("true")) return this.postfix({ kind: "bool", value: 1, type: "bool", token });
+    if (this.match("false")) return this.postfix({ kind: "bool", value: 0, type: "bool", token });
     if (token.kind === "identifier") {
       this.position++;
-      if (!this.match("(")) return { kind: "variable", name: token.value, token };
+      if (this.structNames.has(token.value) && this.match("{")) {
+        const fields = [];
+        if (!this.at("}")) {
+          do {
+            const field = this.expectName("esperado o nome de um campo da struct");
+            this.expect(":", "esperado : depois do campo da struct");
+            fields.push({ name: field.value, value: this.expression(), token: field });
+          } while (this.match(","));
+        }
+        this.expect("}", "literal de struct não foi fechado com }");
+        return this.postfix({ kind: "struct_literal", name: token.value, fields, token });
+      }
+      if (!this.match("(")) return this.postfix({ kind: "variable", name: token.value, token });
       const args = [];
       if (!this.at(")")) do { args.push(this.expression()); } while (this.match(","));
       this.expect(")", "esperado ) depois dos argumentos");
-      return { kind: "call", name: token.value, args, token };
+      return this.postfix({ kind: "call", name: token.value, args, token });
+    }
+    if (this.match("[")) {
+      const token = this.previous();
+      const elements = [];
+      if (!this.at("]")) {
+        do { elements.push(this.expression()); } while (this.match(","));
+      }
+      this.expect("]", "literal de array não foi fechado com ]");
+      return this.postfix({ kind: "array_literal", elements, token });
     }
     throw new LumeError("esperada uma expressão (número, variável, chamada de função ou condição)", token);
+  }
+  postfix(expression) {
+    let value = expression;
+    while (true) {
+      if (this.match("[")) {
+        const token = this.previous();
+        const index = this.expression();
+        this.expect("]", "esperado ] depois do índice");
+        value = { kind: "index", object: value, index, token };
+      } else if (this.match(".")) {
+        const token = this.expectName("esperado o nome do campo depois de .");
+        value = { kind: "field", object: value, name: token.value, token };
+      } else {
+        return value;
+      }
+    }
   }
 }
 
@@ -323,18 +410,53 @@ function vector(items) { return [...uleb(items.length), ...items.flat()]; }
 function wasmName(name) { const bytes = [...new TextEncoder().encode(name)]; return [...uleb(bytes.length), ...bytes]; }
 function section(id, payload) { return [id, ...uleb(payload.length), ...payload]; }
 function signature(params, result) { return `${params.join(",")}>${result || ""}`; }
-const watType = type => type === "bool" || type === "string" ? "i32" : type;
+const watType = type => type === "f64" ? "f64" : "i32";
+const wasmTypeCode = type => type === "f64" ? WASM_TYPE.f64 : WASM_TYPE.i32;
 
 class FunctionEmitter {
-  constructor(fn, functions, functionIndices, strings, functionBindings) {
+  constructor(fn, functions, functionIndices, strings, functionBindings, structs) {
     this.fn = fn; this.functions = functions; this.functionIndices = functionIndices;
     this.functionBindings = functionBindings;
+    this.structs = structs;
     this.strings = strings;
     this.code = []; this.wat = []; this.locals = []; this.scopes = [new Map()];
     fn.params.forEach((param, index) => this.scopes[0].set(param.name, { index, type: param.type, token: param.token }));
     this.paramCount = fn.params.length;
   }
   emit(opcode, text) { this.code.push(opcode); this.wat.push(text); }
+  call(name) {
+    const functionIndex = this.functionIndices.get(name);
+    this.emit(0x10, `call $${name}`);
+    this.code.push(...uleb(functionIndex));
+  }
+  temporary(type = "i32") {
+    const index = this.paramCount + this.locals.length;
+    this.locals.push({ name: `temp${index}`, type });
+    return index;
+  }
+  arrayAllocator(elementType) {
+    if (elementType === "f64") return "array_allocate_f64";
+    if (isManagedType(elementType, this.structs)) return "array_allocate_ref";
+    return "array_allocate_i32";
+  }
+  arrayStorageType(elementType) {
+    return elementType === "f64" ? "f64" : "i32";
+  }
+  emitMemoryLoad(type) { this.call(type === "f64" ? "memory_load_f64" : "memory_load_i32"); }
+  emitMemoryStore(type) { this.call(type === "f64" ? "memory_store_f64" : "memory_store_i32"); }
+  emitArrayAddress(elementType) {
+    const index = this.temporary();
+    this.emit(0x21, `local.set $l${index}_temp${index}`); this.code.push(...uleb(index));
+    const handle = this.temporary();
+    this.emit(0x22, `local.tee $l${handle}_temp${handle}`); this.code.push(...uleb(handle));
+    this.emit(0x20, `local.get $l${index}_temp${index}`); this.code.push(...uleb(index));
+    this.constant("i32", storageWidth(elementType));
+    this.call("memory_array_offset");
+    const offset = this.temporary();
+    this.emit(0x21, `local.set $l${offset}_temp${offset}`); this.code.push(...uleb(offset));
+    this.emit(0x20, `local.get $l${handle}_temp${handle}`); this.code.push(...uleb(handle));
+    this.emit(0x20, `local.get $l${offset}_temp${offset}`); this.code.push(...uleb(offset));
+  }
   constant(type, value) {
     if (type === "f64") {
       this.emit(0x44, `f64.const ${Number(value)}`);
@@ -363,7 +485,8 @@ class FunctionEmitter {
     switch (node.kind) {
       case "block": this.compileBlock(node); break;
       case "let": {
-        const valueType = this.compileExpression(node.value);
+        if (!isKnownType(node.type, this.structs)) throw new LumeError(`tipo “${node.type}” não suportado`, node.token);
+        const valueType = this.compileExpression(node.value, node.type);
         if (valueType !== node.type) throw new LumeError(`a variável “${node.name}” é ${node.type}, mas recebeu ${valueType}`, node.token);
         if (this.scopes[this.scopes.length - 1].has(node.name)) throw new LumeError(`variável “${node.name}” já existe neste bloco`, node.token);
         const index = this.paramCount + this.locals.length;
@@ -377,8 +500,12 @@ class FunctionEmitter {
         if (valueType !== variable.type) throw new LumeError(`não é possível atribuir ${valueType} à variável ${variable.type} “${node.name}”`, node.token);
         this.emit(0x21, `local.set $l${variable.index}_${node.name}`); this.code.push(...uleb(variable.index)); break;
       }
+      case "assign_target": {
+        this.compileAssignment(node);
+        break;
+      }
       case "return": {
-        const type = this.compileExpression(node.value);
+        const type = this.compileExpression(node.value, this.fn.result);
         if (type !== this.fn.result) throw new LumeError(`a função retorna ${this.fn.result}, mas recebeu ${type}`, node.token);
         this.emit(0x0f, "return"); break;
       }
@@ -411,7 +538,7 @@ class FunctionEmitter {
       default: throw new LumeError("instrução não suportada", node.token);
     }
   }
-  compileExpression(node) {
+  compileExpression(node, expectedType = null) {
     switch (node.kind) {
       case "number": this.constant(node.type, node.value); return node.type;
       case "string": this.constant("i32", this.strings.intern(node.value)); return "string";
@@ -435,12 +562,135 @@ class FunctionEmitter {
         if (type !== "i32" && type !== "bool") throw new LumeError("o operador ! exige i32 ou bool", node.token);
         this.emit(0x45, "i32.eqz"); return "bool";
       }
-      case "call": return this.compileCall(node);
+      case "call": return this.compileCall(node, expectedType);
       case "binary": return this.compileBinary(node);
+      case "array_literal": return this.compileArrayLiteral(node, expectedType);
+      case "struct_literal": return this.compileStructLiteral(node);
+      case "index": return this.compileIndex(node);
+      case "field": return this.compileField(node);
       default: throw new LumeError("expressão não suportada", node.token);
     }
   }
-  compileCall(node) {
+  compileArrayLiteral(node, expectedType) {
+    const elementType = arrayElementType(expectedType ?? "");
+    if (!elementType) throw new LumeError("arrays literais precisam de um tipo explícito, por exemplo let xs: array<i32> = [1, 2];", node.token);
+    if (!isKnownType(elementType, this.structs)) throw new LumeError(`tipo de elemento “${elementType}” não suportado`, node.token);
+    const allocator = this.arrayAllocator(elementType);
+    this.constant("i32", node.elements.length);
+    this.call(allocator);
+    const handle = this.temporary();
+    this.emit(0x21, `local.set $l${handle}_temp${handle}`); this.code.push(...uleb(handle));
+    node.elements.forEach((element, index) => {
+      this.emit(0x20, `local.get $l${handle}_temp${handle}`); this.code.push(...uleb(handle));
+      this.constant("i32", index * storageWidth(elementType));
+      const actual = this.compileExpression(element, elementType);
+      if (actual !== elementType) throw new LumeError(`elemento ${index + 1} do array deve ser ${elementType}, não ${actual}`, element.token);
+      this.emitMemoryStore(elementType);
+    });
+    this.emit(0x20, `local.get $l${handle}_temp${handle}`); this.code.push(...uleb(handle));
+    return expectedType;
+  }
+  compileStructLiteral(node) {
+    const struct = this.structs.get(node.name);
+    if (!struct) throw new LumeError(`struct “${node.name}” não existe`, node.token);
+    const values = new Map();
+    for (const field of node.fields) {
+      if (!struct.fields.has(field.name)) throw new LumeError(`campo “${field.name}” não existe na struct “${node.name}”`, field.token);
+      if (values.has(field.name)) throw new LumeError(`campo “${field.name}” informado mais de uma vez`, field.token);
+      values.set(field.name, field);
+    }
+    for (const field of struct.fields.values()) {
+      if (!values.has(field.name)) throw new LumeError(`campo “${field.name}” não informado na struct “${node.name}”`, node.token);
+    }
+    this.constant("i32", struct.size);
+    this.call("memory_alloc_i32");
+    const handle = this.temporary();
+    this.emit(0x21, `local.set $l${handle}_temp${handle}`); this.code.push(...uleb(handle));
+    for (const field of struct.fields.values()) {
+      const value = values.get(field.name);
+      this.emit(0x20, `local.get $l${handle}_temp${handle}`); this.code.push(...uleb(handle));
+      this.constant("i32", field.offset);
+      const actual = this.compileExpression(value.value, field.type);
+      if (actual !== field.type) throw new LumeError(`campo “${field.name}” deve ser ${field.type}, não ${actual}`, value.token);
+      this.emitMemoryStore(field.type);
+    }
+    this.emit(0x20, `local.get $l${handle}_temp${handle}`); this.code.push(...uleb(handle));
+    return node.name;
+  }
+  compileIndex(node) {
+    const objectType = this.compileExpression(node.object);
+    const elementType = arrayElementType(objectType);
+    if (!elementType) throw new LumeError(`tipo “${objectType}” não pode ser indexado`, node.token);
+    const indexType = this.compileExpression(node.index);
+    if (indexType !== "i32") throw new LumeError("o índice do array deve ser i32", node.token);
+    this.emitArrayAddress(elementType);
+    this.emitMemoryLoad(elementType);
+    return elementType;
+  }
+  compileField(node) {
+    const objectType = this.compileExpression(node.object);
+    const elementType = arrayElementType(objectType);
+    if (elementType && node.name === "length") {
+      this.constant("i32", storageWidth(elementType));
+      this.call("memory_length");
+      return "i32";
+    }
+    const struct = this.structs.get(objectType);
+    const field = struct?.fields.get(node.name);
+    if (!field) throw new LumeError(`campo “${node.name}” não existe no tipo “${objectType}”`, node.token);
+    this.constant("i32", field.offset);
+    this.emitMemoryLoad(field.type);
+    return field.type;
+  }
+  compileAssignment(node) {
+    if (node.target.kind === "variable") {
+      const variable = this.lookup(node.target.name, node.target.token);
+      const actual = this.compileExpression(node.value, variable.type);
+      if (actual !== variable.type) throw new LumeError(`não é possível atribuir ${actual} à variável ${variable.type} “${node.target.name}”`, node.token);
+      this.emit(0x21, `local.set $l${variable.index}_${node.target.name}`); this.code.push(...uleb(variable.index));
+      return;
+    }
+    if (node.target.kind === "index") {
+      const objectType = this.compileExpression(node.target.object);
+      const elementType = arrayElementType(objectType);
+      if (!elementType) throw new LumeError(`tipo “${objectType}” não pode ser indexado`, node.target.token);
+      const indexType = this.compileExpression(node.target.index);
+      if (indexType !== "i32") throw new LumeError("o índice do array deve ser i32", node.target.token);
+      this.emitArrayAddress(elementType);
+      const valueType = this.compileExpression(node.value, elementType);
+      if (valueType !== elementType) throw new LumeError(`elemento do array deve ser ${elementType}, não ${valueType}`, node.token);
+      this.emitMemoryStore(elementType);
+      return;
+    }
+    if (node.target.kind === "field") {
+      const objectType = this.compileExpression(node.target.object);
+      const field = this.structs.get(objectType)?.fields.get(node.target.name);
+      if (!field) throw new LumeError(`campo “${node.target.name}” não existe no tipo “${objectType}”`, node.target.token);
+      this.constant("i32", field.offset);
+      const valueType = this.compileExpression(node.value, field.type);
+      if (valueType !== field.type) throw new LumeError(`campo “${node.target.name}” deve ser ${field.type}, não ${valueType}`, node.token);
+      this.emitMemoryStore(field.type);
+      return;
+    }
+    throw new LumeError("o destino da atribuição deve ser uma variável, campo ou elemento de array", node.token);
+  }
+  compileCall(node, expectedType = null) {
+    if (ARRAY_CONSTRUCTORS.has(node.name)) {
+      if (node.args.length !== 1) throw new LumeError(`“${node.name}” espera o tamanho do array`, node.token);
+      const elementType = ARRAY_CONSTRUCTORS.get(node.name);
+      const expectedElement = arrayElementType(expectedType ?? "");
+      const actualElement = elementType === "ref" ? expectedElement : elementType;
+      if (elementType === "ref" && (!actualElement || !isManagedType(actualElement, this.structs))) {
+        throw new LumeError("array_ref exige um tipo gerenciado explícito, por exemplo array_ref(4) em uma variável array<Ponto>", node.token);
+      }
+      if (expectedElement && elementType !== "ref" && expectedElement !== elementType) {
+        throw new LumeError(`“${node.name}” cria array<${elementType}>, não array<${expectedElement}>`, node.token);
+      }
+      const sizeType = this.compileExpression(node.args[0]);
+      if (sizeType !== "i32") throw new LumeError("o tamanho do array deve ser i32", node.args[0].token);
+      this.call(this.arrayAllocator(actualElement));
+      return `array<${actualElement}>`;
+    }
     if (node.name === "print" || node.name === "print_string") {
       if (node.args.length === 1) {
         const textType = this.compileExpression(node.args[0]);
@@ -466,8 +716,9 @@ class FunctionEmitter {
     if (!target) throw new LumeError(`função “${node.name}” não existe`, node.token);
     if (node.args.length !== target.params.length) throw new LumeError(`“${node.name}” espera ${target.params.length} argumento(s), mas recebeu ${node.args.length}`, node.token);
     node.args.forEach((arg, index) => {
-      const actual = this.compileExpression(arg), parameter = target.params[index];
+      const parameter = target.params[index];
       const expected = typeof parameter === "string" ? parameter : parameter.type;
+      const actual = this.compileExpression(arg, expected);
       if (actual !== expected) throw new LumeError(`argumento ${index + 1} de “${node.name}” deve ser ${expected}, não ${actual}`, node.token);
     });
     const functionIndex = this.functionIndices.get(functionName);
@@ -542,6 +793,22 @@ function moduleError(message, token, moduleId) {
   return error;
 }
 
+function arrayElementType(type) {
+  const match = /^array<(.+)>$/.exec(type);
+  return match?.[1] ?? null;
+}
+
+function isManagedType(type, structs) {
+  return type === "string" || type === "ref" || structs.has(type) || arrayElementType(type) !== null;
+}
+
+function storageWidth(type) { return type === "f64" ? 2 : 1; }
+
+function isKnownType(type, structs) {
+  const element = arrayElementType(type);
+  return TYPES.has(type) || structs.has(type) || (element !== null && isKnownType(element, structs));
+}
+
 function parseModules(source, options) {
   if (options === null || typeof options !== "object" || Array.isArray(options)) {
     throw new TypeError("as opções de compilação devem ser um objeto");
@@ -603,14 +870,39 @@ function parseModules(source, options) {
   const modules = [...programs].map(([id, program], index) => ({ id, index, ...program }));
   const functions = [];
   const functionsByModule = new Map();
+  const structs = new Map();
+  for (const module of modules) {
+    for (const declaration of module.structs) {
+      if (TYPES.has(declaration.name) || declaration.name === "array" || ARRAY_CONSTRUCTORS.has(declaration.name)) {
+        throw moduleError(`“${declaration.name}” é um nome reservado para um tipo`, declaration.token, module.id);
+      }
+      if (structs.has(declaration.name)) throw moduleError(`struct “${declaration.name}” declarada mais de uma vez`, declaration.token, module.id);
+      let offset = 0;
+      const fields = new Map();
+      for (const field of declaration.fields) {
+        fields.set(field.name, { ...field, offset });
+        offset += storageWidth(field.type);
+      }
+      structs.set(declaration.name, { ...declaration, fields, size: offset, moduleId: module.id });
+    }
+  }
+  for (const declaration of structs.values()) {
+    for (const field of declaration.fields.values()) {
+      if (!isKnownType(field.type, structs)) {
+        throw moduleError(`tipo “${field.type}” não suportado no campo “${field.name}”`, field.token, declaration.moduleId);
+      }
+    }
+  }
   for (const module of modules) {
     const localFunctions = new Map();
     for (const [functionIndex, fn] of module.functions.entries()) {
-      if (BUILTINS.some(item => item.name === fn.name)) throw moduleError(`“${fn.name}” é um nome reservado`, fn.token, module.id);
+      if (BUILTINS.some(item => item.name === fn.name) || ARRAY_CONSTRUCTORS.has(fn.name)) throw moduleError(`“${fn.name}” é um nome reservado`, fn.token, module.id);
       if (localFunctions.has(fn.name)) throw moduleError(`função “${fn.name}” declarada mais de uma vez no módulo “${module.id}”`, fn.token, module.id);
       const paramNames = new Set();
+      if (!isKnownType(fn.result, structs)) throw moduleError(`tipo de retorno “${fn.result}” não suportado`, fn.token, module.id);
       for (const param of fn.params) {
         if (paramNames.has(param.name)) throw moduleError(`parâmetro “${param.name}” duplicado`, param.token, module.id);
+        if (!isKnownType(param.type, structs)) throw moduleError(`tipo “${param.type}” não suportado no parâmetro “${param.name}”`, param.token, module.id);
         paramNames.add(param.name);
       }
       fn.moduleId = module.id;
@@ -628,7 +920,7 @@ function parseModules(source, options) {
     for (const item of module.imports) {
       const dependencyFunctions = functionsByModule.get(item.moduleId);
       for (const imported of item.names) {
-        if (BUILTINS.some(builtin => builtin.name === imported.local)) {
+        if (BUILTINS.some(builtin => builtin.name === imported.local) || ARRAY_CONSTRUCTORS.has(imported.local)) {
           throw moduleError(`“${imported.local}” é um nome reservado e não pode ser usado como alias`, imported.token, module.id);
         }
         if (bindings.has(imported.local)) throw moduleError(`nome importado “${imported.local}” já está declarado no módulo “${module.id}”`, imported.token, module.id);
@@ -647,7 +939,7 @@ function parseModules(source, options) {
   if (!main) throw new LumeError("o programa precisa declarar fn main() -> i32 { ... }");
   if (main.params.length) throw new LumeError("fn main não pode receber parâmetros", main.token);
   if (main.result !== "i32") throw new LumeError("fn main deve retornar i32", main.token);
-  return { functions, rootFunctions: [...rootFunctions.values()], bindingsByFunction };
+  return { functions, rootFunctions: [...rootFunctions.values()], bindingsByFunction, structs };
 }
 
 function compileProgram(program) {
@@ -662,7 +954,7 @@ function compileProgram(program) {
   const strings = new StringPool();
   const compiled = program.functions.map(fn => ({
     fn,
-    output: new FunctionEmitter(fn, functions, functionIndices, strings, program.bindingsByFunction.get(fn)),
+    output: new FunctionEmitter(fn, functions, functionIndices, strings, program.bindingsByFunction.get(fn), program.structs),
   }));
   for (const item of compiled) {
     try {
@@ -685,7 +977,7 @@ function compileProgram(program) {
   };
   const importTypeIndices = BUILTINS.map(item => typeIndex(item.params, item.result));
   const functionTypeIndices = program.functions.map(fn => typeIndex(fn.params.map(param => param.type), fn.result));
-  const typeSection = section(1, vector(types.map(type => [0x60, ...vector(type.params.map(param => [WASM_TYPE[param]])), ...vector(type.result ? [[WASM_TYPE[type.result]]] : [])])));
+  const typeSection = section(1, vector(types.map(type => [0x60, ...vector(type.params.map(param => [wasmTypeCode(param)])), ...vector(type.result ? [[wasmTypeCode(type.result)]] : [])])));
   const importSection = section(2, vector(BUILTINS.map((item, index) => [...wasmName("host"), ...wasmName(item.name), 0x00, ...uleb(importTypeIndices[index])])));
   const functionSection = section(3, vector(functionTypeIndices.map(index => uleb(index))));
   const exports = program.rootFunctions.map(fn => [...wasmName(fn.name), 0x00, ...uleb(functionIndices.get(fn.wasmName))]);
@@ -694,7 +986,7 @@ function compileProgram(program) {
   const memoryPages = Math.max(1, Math.ceil(strings.bytes.length / 65_536));
   const memorySection = section(5, [0x01, 0x00, ...uleb(memoryPages)]);
   const codeSection = section(10, vector(bodies.map(body => {
-    const groups = body.locals.map(local => [1, WASM_TYPE[local.type]]);
+    const groups = body.locals.map(local => [1, wasmTypeCode(local.type)]);
     const localBytes = vector(groups);
     const content = [...localBytes, ...body.code];
     return [...uleb(content.length), ...content];

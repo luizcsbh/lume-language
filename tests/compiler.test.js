@@ -10,7 +10,9 @@ function instantiate(source, host) {
   const defaultHost = {
     print_i32() {}, print_f64() {}, print_string() {}, print() {}, canvas_clear() {}, canvas_dot() {}, dom_value() {},
     dom_set_i32() {}, dom_set_f64() {}, dom_set_visible() {}, read_slider() { return 0; }, listen_click() {},
-    memory_alloc_i32() { return 1; }, memory_load_i32() { return 0; }, memory_store_i32() {}, memory_free() {},
+    memory_alloc_i32() { return 1; }, memory_load_i32() { return 0; }, memory_store_i32() {},
+    memory_load_f64() { return 0; }, memory_store_f64() {}, memory_length() { return 0; }, memory_array_offset() { return 0; },
+    array_allocate_i32() { return 1; }, array_allocate_f64() { return 1; }, array_allocate_ref() { return 1; }, memory_free() {},
   };
   return { output, instance: new WebAssembly.Instance(new WebAssembly.Module(output.bytes), { host: { ...defaultHost, ...host } }) };
 }
@@ -63,6 +65,41 @@ export fn somar(a: i32, b: i32) -> i32 { return dobrar(a) + b; }`,
   assert.equal(instance.exports.main(), 61);
   assert.equal(instance.exports.somar, undefined);
   assert.match(output.wat, /call \$lume_m2_f0_dobrar/);
+});
+
+test("API pública executa arrays e structs com heap gerenciado e libera ao retornar", async () => {
+  const source = `struct Size { width: f64, height: f64 }
+fn main() -> i32 {
+  let dimensions: array<f64> = [2.5, 4.0];
+  let size: Size = Size { width: dimensions[0], height: dimensions[1] };
+  print_f64(size.width * size.height);
+  return dimensions.length;
+}`;
+  const printed = [];
+  const runtime = await instantiatePackage(source, { host: { print_f64(value) { printed.push(value); } } });
+  assert.equal(runtime.run(), 2);
+  assert.deepEqual(printed, [10]);
+  assert.throws(() => runtime.run(), /já foi liberada/);
+  runtime.dispose();
+});
+
+test("mantém o heap após run enquanto callbacks de clique continuam ativos", async () => {
+  const runtime = await instantiatePackage(
+    "fn make() -> array<i32> { return [42]; } fn main() -> i32 { listen_click(); return 0; } fn on_click(x: i32, y: i32) -> i32 { return x + y; }",
+    { host: { listen_click() {} } },
+  );
+  assert.equal(runtime.run(), 0);
+  assert.ok(runtime.instance.exports.make() > 0);
+  runtime.dispose();
+  assert.throws(() => runtime.instance.exports.make(), /heap desta execução já foi liberado/);
+});
+
+test("rejeita tipos de elemento e campos inválidos em arrays e structs", () => {
+  assert.throws(() => compile("struct Point { x: i32 } fn main() -> i32 { let p: Point = Point { y: 1 }; return 0; }"), /campo “y” não existe/);
+  assert.throws(() => compile("struct Point { x: i32 } fn main() -> i32 { let p: Point = Point {}; return 0; }"), /campo “x” não informado/);
+  assert.throws(() => compile("fn main() -> i32 { let values: array<i32> = [true]; return 0; }"), /elemento 1 do array deve ser i32/);
+  assert.throws(() => compile("fn main() -> i32 { let values: array<f64> = array_i32(2); return 0; }"), /cria array<i32>, não array<f64>/);
+  assert.throws(() => compile("fn main() -> i32 { let values: array<Missing> = []; return 0; }"), /tipo “array<Missing>” não suportado/);
 });
 
 test("valida módulos ausentes, exports e caminhos relativos", () => {

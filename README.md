@@ -53,7 +53,7 @@ fn main() -> i32 {
   return 0;
 }`;
 
-const { instance } = await instantiate(source, {
+const { run } = await instantiate(source, {
   host: {
     print_i32(value) {
       console.log(value);
@@ -61,10 +61,10 @@ const { instance } = await instantiate(source, {
   },
 });
 
-instance.exports.main();
+run();
 ```
 
-Run it with `node app.mjs`. The console prints `42`. `instantiate` compiles and validates the WASM module and returns the instance and compilation output. Provide an implementation in `host` for every imported function your program uses; calling a missing import throws an explicit error.
+Run it with `node app.mjs`. The console prints `42`. `instantiate` compiles and validates the WASM module and returns the instance and compilation output. `run()` executes `main()` and releases the managed heap when it returns, unless the program registers a click listener; in that case call `dispose()` after callbacks are finished. If calling `instance.exports.main()` directly, call `dispose()` when the program is finished. The runtime supplies managed-memory imports; provide an implementation in `host` for other imported functions your program uses. Calling a missing import throws an explicit error.
 
 ### Importing Lume modules
 
@@ -77,14 +77,14 @@ const source = `
 import { add as sum } from "./math.lume";
 fn main() -> i32 { return sum(19, 23); }`;
 
-const { instance } = await instantiate(source, {
+const { run } = await instantiate(source, {
   modules: {
     "math.lume": "export fn add(a: i32, b: i32) -> i32 { return a + b; }",
   },
   host: {},
 });
 
-console.log(instance.exports.main()); // 42
+console.log(run()); // 42
 ```
 
 Modules are compiled into one WebAssembly module. Only source files explicitly provided through `modules` can be imported; paths are relative `.lume` paths, and no filesystem or network access occurs during resolution.
@@ -162,11 +162,42 @@ fn main() -> i32 {
 }
 ```
 
-Functions use `fn`; parameters have names and types (`name: type`), and a return type may follow `->`. `main` is the entry point, takes no parameters, and returns `i32`. Available types are `i32`, `f64`, `bool`, and `string`; booleans use WebAssembly's `i32` representation, and strings are stored as UTF-8 in the module's memory. Local variables use `let name: type = value;` and can be updated. Integers are written without a decimal point; decimals are `f64`. The prototype supports `if`/`else`, `while`, function calls, recursion, assignment, `//` and `/* ... */` comments, arithmetic, comparisons, and `&&`/`||` boolean operators (without short-circuit evaluation). Implicit conversions, string concatenation with `+`, arrays, structs, and user-defined types are not included; `print("text", number)` joins text and a number only in its output.
+Functions use `fn`; parameters have names and types (`name: type`), and a return type may follow `->`. `main` is the entry point, takes no parameters, and returns `i32`. Available primitive types are `i32`, `f64`, `bool`, and `string`; booleans use WebAssembly's `i32` representation, and strings are stored as UTF-8 in the module's memory. Local variables use `let name: type = value;` and can be updated. Integers are written without a decimal point; decimals are `f64`. The prototype supports `if`/`else`, `while`, function calls, recursion, assignment, `//` and `/* ... */` comments, arithmetic, comparisons, and `&&`/`||` boolean operators (without short-circuit evaluation). Implicit conversions and string concatenation with `+` are not included; `print("text", number)` joins text and a number only in its output.
+
+### Arrays and structs
+
+Arrays have an explicit element type, fixed length after allocation, mutable indexed elements, and a `.length` property. A typed array literal allocates its elements in the managed heap:
+
+```lume
+fn main() -> i32 {
+  let scores: array<i32> = [8, 13, 21];
+  scores[1] = 34;
+  print_i32(scores[1]);
+  return scores.length;
+}
+```
+
+For a size known only at runtime, use `array_i32(size)`, `array_f64(size)`, `array_bool(size)`, or `array_string(size)`. Use `array_ref(size)` for an array of structs or other managed values, with an explicit type such as `array<Point>`. Empty literals are allowed when the variable or parameter supplies the array type, for example `let values: array<f64> = [];`.
+
+Structs declare named, typed fields and are initialized with all fields exactly once. Fields and array elements can be read or assigned, including nested values:
+
+```lume
+struct Point { x: i32, y: f64 }
+
+fn main() -> i32 {
+  let points: array<Point> = array_ref(1);
+  points[0] = Point { x: 4, y: 2.5 };
+  points[0].x = points[0].x + 1;
+  print_f64(points[0].y);
+  return points[0].x;
+}
+```
+
+The runtime manages these allocations in its bounded host heap and releases them at the end of `run()` unless a click listener keeps callbacks active; in that case, call `dispose()` when done. In the playground, the Worker releases them when execution ends. This is per-run region management, not a garbage collector: arrays do not resize, and values are not shared across runs or Workers.
 
 ## JavaScript interoperability
 
-Imported host functions include `print_i32(i32)`, `print_f64(f64)`, `print_string(string)`, `print(string, number)`, Canvas, the controlled DOM API, `read_slider() -> i32`, `listen_click()`, and the memory imports described below. In Lume, `print` and `print_string` are equivalent: both accept `print("text")` or `print("text", number)`; the number can be `i32` or `f64`, and the text and number representation are emitted together. To implement these imports in another application, the text argument is a pointer to UTF-8 bytes in the exported memory at `instance.exports.memory`; the four bytes before the pointer contain the byte length as a little-endian integer. With a number, it reaches the `print` import as `f64`; with text only, the `print_string` import receives the pointer. In the playground, the Worker decodes the text and sends it to the console. These imports demonstrate the WASM–JavaScript boundary; visual imports are Worker messages that the interface uses to update the DOM and Canvas. `listen_click()` enables calls to the optional exported function `on_click(x: i32, y: i32) -> i32` when the user clicks the Canvas.
+Imported host functions include `print_i32(i32)`, `print_f64(f64)`, `print_string(string)`, `print(string, number)`, Canvas, the controlled DOM API, `read_slider() -> i32`, `listen_click()`, and the memory imports described below. `instantiate()` supplies the bounded memory imports for arrays, structs, and explicit memory operations. In Lume, `print` and `print_string` are equivalent: both accept `print("text")` or `print("text", number)`; the number can be `i32` or `f64`, and the text and number representation are emitted together. To implement printing in another application, the text argument is a pointer to UTF-8 bytes in the exported WASM memory; the four bytes before the pointer contain its byte length as a little-endian integer. In the playground, the Worker decodes the text and sends it to the console. These imports demonstrate the WASM–JavaScript boundary; visual imports are Worker messages that the interface uses to update the DOM and Canvas. `listen_click()` enables calls to the optional exported function `on_click(x: i32, y: i32) -> i32` when the user clicks the Canvas.
 
 ## Controlled DOM API
 
@@ -180,9 +211,9 @@ The program cannot supply selectors, HTML, attributes, URLs, event listeners, or
 
 The **Memory & threads** example uses `memory_alloc_i32(cells: i32) -> i32`, `memory_load_i32(handle: i32, index: i32) -> i32`, `memory_store_i32(handle: i32, index: i32, value: i32)`, and `memory_free(handle: i32)`. Allocation returns an opaque handle, not an address or pointer. Each read and write requires a live handle and an index within the block; out-of-range i32 values, invalid handles or indices, and repeated frees are rejected.
 
-The host maintains the heap in the Worker using an `Int32Array`; it is **not** the WebAssembly module's native linear memory. It starts at 64 KiB, grows on demand to 16 MiB, and allows at most 16,384 live blocks per run. New and freed allocations are zeroed; adjacent free ranges are merged. When fragmentation prevents an allocation, blocks can be compacted: the program holds only stable handles and cannot observe physical positions. The Worker reports bytes used/reserved and the live block count in the console.
+The host maintains the heap in the Worker using a bounded buffer; it is **not** the WebAssembly module's native linear memory. It starts at 64 KiB, grows on demand to 16 MiB, and allows at most 16,384 live blocks per run. New and freed allocations are zeroed; adjacent free ranges are merged. When fragmentation prevents an allocation, blocks can be compacted: the program holds only stable handles and cannot observe physical positions. The Worker reports bytes used/reserved and the live block count in the console. Typed arrays and structs use this same heap; `f64` elements occupy two `i32` cells.
 
-The heap resets on each run: it is released when `main()` returns if there is no click listener; if `listen_click()` keeps the Worker active, the heap lasts until the next run, an error, or Worker termination. This experimental API supports `i32` cells only; it does not yet provide strings, collections, pointers, sharing between Workers, a garbage collector, or general access to WASM memory.
+The heap resets on each playground run: it is released when `main()` returns if there is no click listener; if `listen_click()` keeps the Worker active, the heap lasts until the next run, an error, or Worker termination. The managed heap does not expose raw pointers or general access to WASM memory, and it does not provide a garbage collector or sharing between Workers.
 
 The **Memory & threads** example demonstrates allocating, writing, reading, reusing, and freeing a block. The Canvas displays a dot chart: three dots represent the three allocated `i32` cells, and one dot per execution thread compares Lume and JavaScript. Labels and the calculated sum appear in the console. Lume controls memory through handles, while the JavaScript host maintains the actual buffer. In the playground, the WASM program runs in **one Worker (one execution thread)** while the interface JavaScript stays on the main thread. Synchronous JavaScript on the interface uses one execution thread; to keep the interface responsive while isolating computation, JavaScript also uses a Worker. Thus, for this setup, Lume does not require more threads than JavaScript. Thread count alone does not determine which option is faster.
 
@@ -200,7 +231,7 @@ MapLibre GL JS and its worker are served from local files in `vendor/maplibre-gl
 
 ## Limits
 
-This is an educational prototype: the heap is limited to the auxiliary `i32` service described above, with no management of native WASM linear memory, debugger, or package ecosystem. The compiler rejects source above 65,536 UTF-16 code units and syntax nesting deeper than 128; host effects are limited to 4,096 per call. These limits reduce accidental failures and simple abuse but do not provide a WASM instruction budget: a loop can consume CPU until the Worker is stopped. Do not run untrusted programs; WebAssembly and Workers are not a security sandbox. Automated and manual review reduce known risks but cannot guarantee that vulnerabilities are absent. WebAssembly is not automatically faster than JavaScript for every workload; frequent DOM access still passes through JavaScript. The public OpenFreeMap endpoint has no SLA; for critical applications, consider a commercial provider or self-hosting.
+This is an educational prototype: the managed heap supports typed arrays, structs, and explicit `i32` blocks, but does not manage native WASM linear memory; debugger and package ecosystem support are also limited. The compiler rejects source above 65,536 UTF-16 code units and syntax nesting deeper than 128; host effects are limited to 4,096 per call. These limits reduce accidental failures and simple abuse but do not provide a WASM instruction budget: a loop can consume CPU until the Worker is stopped. Do not run untrusted programs; WebAssembly and Workers are not a security sandbox. Automated and manual review reduce known risks but cannot guarantee that vulnerabilities are absent. WebAssembly is not automatically faster than JavaScript for every workload; frequent DOM access still passes through JavaScript. The public OpenFreeMap endpoint has no SLA; for critical applications, consider a commercial provider or self-hosting.
 
 Signed `i32` arithmetic follows WebAssembly instructions: division or remainder by zero traps, and `-2147483648 / -1` also traps. In that case, `-2147483648 % -1` is zero. A trap interrupts the call and the Worker discards pending DOM commands.
 

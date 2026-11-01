@@ -1,5 +1,6 @@
 import { MEMORY_MAX_CELLS } from "./memory-contract.js";
 import {
+  ArrayOffsetRequest,
   AllocateI32Request,
   FreeMemoryRequest,
   LoadI32Request,
@@ -10,7 +11,7 @@ export class MemoryService {
   #repository;
 
   constructor(repository) {
-    const required = ["allocate", "loadI32", "storeI32", "free", "stats", "close"];
+    const required = ["allocate", "loadI32", "storeI32", "arrayOffset", "free", "stats", "close"];
     if (!repository || required.some(method => typeof repository[method] !== "function")) {
       throw new TypeError("repositório de memória incompatível");
     }
@@ -25,6 +26,15 @@ export class MemoryService {
     return this.#repository.allocate(request.cells);
   }
 
+  allocateArray(request, width = 1) {
+    if (!(request instanceof AllocateI32Request)) throw new TypeError("requisição de alocação não confiável");
+    if (!Number.isSafeInteger(width) || width < 1
+      || !Number.isSafeInteger(request.cells) || request.cells < 0 || request.cells > MEMORY_MAX_CELLS / width) {
+      throw new RangeError("tamanho de array Lume inválido");
+    }
+    return this.#repository.allocateArray(request.cells, width);
+  }
+
   load(request) {
     if (!(request instanceof LoadI32Request)) throw new TypeError("requisição de leitura não confiável");
     return this.#repository.loadI32(request.handle, request.index);
@@ -33,6 +43,26 @@ export class MemoryService {
   store(request) {
     if (!(request instanceof StoreI32Request)) throw new TypeError("requisição de escrita não confiável");
     this.#repository.storeI32(request.handle, request.index, request.value);
+  }
+
+  loadF64(request) {
+    if (!(request instanceof LoadI32Request)) throw new TypeError("requisição de leitura não confiável");
+    return this.#repository.loadF64(request.handle, request.index);
+  }
+
+  storeF64(request) {
+    if (!(request instanceof StoreI32Request)) throw new TypeError("requisição de escrita não confiável");
+    this.#repository.storeF64(request.handle, request.index, request.value);
+  }
+
+  length(request) {
+    if (!(request instanceof LoadI32Request)) throw new TypeError("requisição de leitura não confiável");
+    return this.#repository.length(request.handle, request.index);
+  }
+
+  arrayOffset(request) {
+    if (!(request instanceof ArrayOffsetRequest)) throw new TypeError("requisição de índice não confiável");
+    return this.#repository.arrayOffset(request.handle, request.index, request.stride);
   }
 
   free(request) {

@@ -23,6 +23,11 @@
     "src/compiler.js",
     "src/index.js",
     "src/runtime.js",
+    "src/memory-contract.js",
+    "src/memory-host.js",
+    "src/memory-requests.js",
+    "src/memory-repository.js",
+    "src/memory-service.js",
     "LICENSE",
     "README.md",
     "README.pt-BR.md"

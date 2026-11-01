@@ -6,6 +6,15 @@ export class LoadI32Request {
   constructor(handle, index) { this.handle = handle; this.index = index; Object.freeze(this); }
 }
 
+export class ArrayOffsetRequest {
+  constructor(handle, index, stride) {
+    this.handle = handle;
+    this.index = index;
+    this.stride = stride;
+    Object.freeze(this);
+  }
+}
+
 export class StoreI32Request {
   constructor(handle, index, value) {
     this.handle = handle;

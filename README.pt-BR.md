@@ -51,7 +51,7 @@ fn main() -> i32 {
   return 0;
 }`;
 
-const { instance } = await instantiate(source, {
+const { run } = await instantiate(source, {
   host: {
     print_i32(value) {
       console.log(value);
@@ -137,7 +137,28 @@ fn main() -> i32 {
 }
 ```
 
-Funções são declaradas com `fn`, parâmetros têm nomes e tipos (`nome: tipo`), e o resultado pode vir depois de `->`. `main` é a entrada, não recebe parâmetros e retorna `i32`. Os tipos disponíveis são `i32`, `f64`, `bool` e `string`; booleanos usam a representação WebAssembly `i32`, e strings são armazenadas como UTF-8 na memória do módulo. Variáveis locais usam `let nome: tipo = valor;` e podem ser atualizadas. Inteiros são literais sem ponto decimal; decimais são `f64`. Existem `if`/`else`, `while`, chamadas de função, recursão, atribuição, comentários `//` e `/* ... */`, aritmética, comparações e operadores booleanos `&&` e `||` (com avaliação não short-circuit). Conversões implícitas, concatenação de strings com `+`, arrays, structs e tipos definidos pelo usuário ainda não estão incluídos; `print("texto", numero)` concatena texto e número somente na saída.
+Funções são declaradas com `fn`, parâmetros têm nomes e tipos (`nome: tipo`), e o resultado pode vir depois de `->`. `main` é a entrada, não recebe parâmetros e retorna `i32`. Os tipos primitivos disponíveis são `i32`, `f64`, `bool` e `string`; booleanos usam a representação WebAssembly `i32`, e strings são armazenadas como UTF-8 na memória do módulo. Variáveis locais usam `let nome: tipo = valor;` e podem ser atualizadas. Inteiros são literais sem ponto decimal; decimais são `f64`. Existem `if`/`else`, `while`, chamadas de função, recursão, atribuição, comentários `//` e `/* ... */`, aritmética, comparações e operadores booleanos `&&` e `||` (com avaliação não short-circuit). Conversões implícitas e concatenação de strings com `+` não estão incluídas; `print("texto", numero)` concatena texto e número somente na saída.
+
+### Arrays e structs
+
+Arrays têm tipo explícito, tamanho fixo após a alocação, elementos mutáveis por índice e a propriedade `.length`. Um literal tipado aloca os elementos no heap gerenciado:
+
+```lume
+struct Point { x: i32, y: f64 }
+
+fn main() -> i32 {
+  let scores: array<i32> = [8, 13, 21];
+  scores[1] = 34;
+  let points: array<Point> = array_ref(1);
+  points[0] = Point { x: scores[1], y: 2.5 };
+  print_f64(points[0].y);
+  return points.length;
+}
+```
+
+Para tamanhos conhecidos apenas durante a execução, use `array_i32(tamanho)`, `array_f64(tamanho)`, `array_bool(tamanho)` ou `array_string(tamanho)`. `array_ref(tamanho)` cria arrays de structs e outros valores gerenciados, com o tipo informado, por exemplo `array<Point>`. Literais vazios são válidos quando a variável ou parâmetro informa o tipo. Structs declaram campos tipados; a inicialização exige todos os campos exatamente uma vez. Campos e elementos podem ser lidos e alterados, inclusive em valores aninhados.
+
+O runtime gerencia essas alocações em um heap limitado e as libera ao final de `run()`, exceto se um listener mantiver callbacks ativos; nesse caso, chame `dispose()` ao terminar. No playground, o Worker libera o heap ao fim da execução. Isso é gerenciamento por região de execução, não um garbage collector: arrays não mudam de tamanho e valores não são compartilhados entre execuções ou Workers.
 
 O compilador aceita módulos nomeados fornecidos explicitamente pelo host. Funções importadas precisam ser exportadas com `export fn`; caminhos são relativos, terminam em `.lume` e só podem resolver para fontes presentes no objeto `modules`:
 
@@ -160,8 +181,10 @@ const { instance } = await instantiate(source, {
   host: {},
 });
 
-console.log(instance.exports.main()); // 42
+console.log(run()); // 42
 ```
+
+`run()` executa `main()` e libera o heap ao retornar, exceto quando o programa registra um listener de clique; nesse caso, chame `dispose()` após terminar os callbacks. Se chamar `instance.exports.main()` diretamente, libere os recursos com `dispose()` quando terminar. O runtime fornece os imports de memória gerenciada; implemente em `host` as demais funções importadas que seu programa usar. Chamadas a imports sem implementação falham explicitamente.
 
 O compilador combina os arquivos em um único módulo WASM; não lê arquivos nem busca módulos na rede. Módulos não importados são rejeitados.
 
@@ -183,7 +206,7 @@ O exemplo **Memória & threads** usa `memory_alloc_i32(cells: i32) -> i32`, `mem
 
 O heap é mantido no Worker pelo host em um `Int32Array`, e **não** é a memória linear nativa do módulo WebAssembly. Começa com 64 KiB, cresce sob demanda até 16 MiB e aceita no máximo 16.384 blocos vivos por execução. Alocações novas e liberadas são zeradas; intervalos livres adjacentes são unidos. Quando a fragmentação impede uma alocação, os blocos podem ser compactados: o programa só possui handles estáveis, então não observa posições físicas. O Worker mostra bytes usados/reservados e blocos vivos no console.
 
-O heap é reiniciado a cada execução: é liberado ao final de `main()` quando não há listener de clique; se `listen_click()` o mantiver ativo, dura até a próxima execução, erro ou encerramento do Worker. Esta é uma API experimental somente para células `i32`: ainda não oferece strings, coleções, ponteiros, compartilhamento entre Workers, garbage collector ou acesso geral à memória WASM.
+O heap é reiniciado a cada execução: é liberado ao final de `main()` quando não há listener de clique; se `listen_click()` o mantiver ativo, dura até a próxima execução, erro ou encerramento do Worker. Arrays e structs usam o mesmo heap; valores `f64` ocupam duas células `i32`. O heap não expõe ponteiros crus nem acesso geral à memória WASM e não oferece garbage collector ou compartilhamento entre Workers.
 
 O exemplo **Memória & threads** demonstra alocação, escrita, leitura, reutilização e liberação de um bloco. O Canvas mostra um gráfico de pontos: três pontos representam as três células `i32` alocadas, e um ponto para cada thread de execução compara Lume e JavaScript. Os rótulos e a soma calculada aparecem no console. Lume controla a memória por handles, enquanto o host JavaScript mantém o buffer real. No playground, o programa WASM roda em **um Worker (uma thread de execução)** e o JavaScript da interface permanece na thread principal. Um programa JavaScript síncrono na interface usa uma thread de execução; se precisar manter a interface responsiva com o cálculo isolado, também usa um Worker. Portanto, para esse cenário, Lume não exige mais threads do que JavaScript. O número de threads por si só não indica qual opção será mais rápida.
 
