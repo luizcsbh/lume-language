@@ -110,7 +110,7 @@ function stopWorker(showMessage = true) {
 }
 function newWorker(action, source) {
   if (worker) worker.terminate();
-  worker = new Worker(new URL("./worker.js?v=lume-print-20261101-r2", import.meta.url), { type: "module" });
+  worker = new Worker(new URL("./worker.js?v=lume-modules-20261101-r1", import.meta.url), { type: "module" });
   pendingSource = source;
   pointerReady = false;
   clickEnabled = false;

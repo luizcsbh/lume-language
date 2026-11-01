@@ -6,7 +6,7 @@ export async function instantiate(source, options = {}) {
     throw new TypeError("As importações host devem ser fornecidas como um objeto.");
   }
 
-  const output = compile(source);
+  const output = compile(source, { modules: options.modules });
   const module = await WebAssembly.compile(output.bytes);
   const hostImports = {};
 

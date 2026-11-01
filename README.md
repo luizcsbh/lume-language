@@ -66,6 +66,29 @@ instance.exports.main();
 
 Run it with `node app.mjs`. The console prints `42`. `instantiate` compiles and validates the WASM module and returns the instance and compilation output. Provide an implementation in `host` for every imported function your program uses; calling a missing import throws an explicit error.
 
+### Importing Lume modules
+
+Use named imports and export functions from the supplied source map:
+
+```js
+import { instantiate } from "@luizcsbh/lume-language";
+
+const source = `
+import { add as sum } from "./math.lume";
+fn main() -> i32 { return sum(19, 23); }`;
+
+const { instance } = await instantiate(source, {
+  modules: {
+    "math.lume": "export fn add(a: i32, b: i32) -> i32 { return a + b; }",
+  },
+  host: {},
+});
+
+console.log(instance.exports.main()); // 42
+```
+
+Modules are compiled into one WebAssembly module. Only source files explicitly provided through `modules` can be imported; paths are relative `.lume` paths, and no filesystem or network access occurs during resolution.
+
 To compile and inspect without instantiating:
 
 ```js
@@ -139,7 +162,7 @@ fn main() -> i32 {
 }
 ```
 
-Functions use `fn`; parameters have names and types (`name: type`), and a return type may follow `->`. `main` is the entry point, takes no parameters, and returns `i32`. Available types are `i32`, `f64`, `bool`, and `string`; booleans use WebAssembly's `i32` representation, and strings are stored as UTF-8 in the module's memory. Local variables use `let name: type = value;` and can be updated. Integers are written without a decimal point; decimals are `f64`. The prototype supports `if`/`else`, `while`, function calls, recursion, assignment, `//` and `/* ... */` comments, arithmetic, comparisons, and `&&`/`||` boolean operators (without short-circuit evaluation). Implicit conversions, string concatenation with `+`, arrays, structs, modules, and user-defined types are not included; `print("text", number)` joins text and a number only in its output.
+Functions use `fn`; parameters have names and types (`name: type`), and a return type may follow `->`. `main` is the entry point, takes no parameters, and returns `i32`. Available types are `i32`, `f64`, `bool`, and `string`; booleans use WebAssembly's `i32` representation, and strings are stored as UTF-8 in the module's memory. Local variables use `let name: type = value;` and can be updated. Integers are written without a decimal point; decimals are `f64`. The prototype supports `if`/`else`, `while`, function calls, recursion, assignment, `//` and `/* ... */` comments, arithmetic, comparisons, and `&&`/`||` boolean operators (without short-circuit evaluation). Implicit conversions, string concatenation with `+`, arrays, structs, and user-defined types are not included; `print("text", number)` joins text and a number only in its output.
 
 ## JavaScript interoperability
 

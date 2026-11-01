@@ -47,6 +47,41 @@ test("API pública do pacote executa o exemplo Hello World com imports explícit
   assert.match(compiled.wat, /import "host" "print" \(func \$print \(param i32\) \(param f64\)\)/);
 });
 
+test("compila módulos Lume com imports nomeados e caminhos relativos", async () => {
+  const source = `import { somar as soma } from "./math/ops.lume";
+fn main() -> i32 { return soma(19, 23); }`;
+  const modules = {
+    "math/ops.lume": `import { dobrar } from "../numbers.lume";
+export fn somar(a: i32, b: i32) -> i32 { return dobrar(a) + b; }`,
+    "numbers.lume": `export fn dobrar(value: i32) -> i32 { return value * 2; }`,
+  };
+  const output = compile(source, { modules });
+  assert.equal(WebAssembly.validate(output.bytes), true);
+  assert.deepEqual(output.functions, ["main"]);
+
+  const { instance } = await instantiatePackage(source, { modules });
+  assert.equal(instance.exports.main(), 61);
+  assert.equal(instance.exports.somar, undefined);
+  assert.match(output.wat, /call \$lume_m2_f0_dobrar/);
+});
+
+test("valida módulos ausentes, exports e caminhos relativos", () => {
+  const source = 'import { soma } from "./math.lume"; fn main() -> i32 { return soma(1, 2); }';
+  assert.throws(() => compile(source), /módulo “math\.lume” não foi fornecido/);
+  assert.throws(() => compile(source, { modules: {
+    "math.lume": "fn soma(a: i32, b: i32) -> i32 { return a + b; }",
+  } }), /função “soma” não está exportada/);
+  assert.throws(() => compile('import { soma } from "../math.lume"; fn main() -> i32 { return 0; }', {
+    modules: { "math.lume": "export fn soma(a: i32, b: i32) -> i32 { return a + b; }" },
+  }), /não pode sair da raiz/);
+  assert.throws(() => compile('fn main() -> i32 { return 0; }', {
+    modules: { "unused.lume": "export fn helper() -> i32 { return 1; }" },
+  }), /foi fornecido, mas não é importado/);
+  assert.throws(() => compile(source, { modules: {
+    "math.lume": "export fn soma(a: i32, b: i32) -> i32 { return 1.5; }",
+  } }), /math\.lume: linha 1, coluna/);
+});
+
 test("API pública falha explicitamente quando um import chamado não foi fornecido", async () => {
   const { instance } = await instantiatePackage(
     "fn main() -> i32 { canvas_clear(); return 0; }",

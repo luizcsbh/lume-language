@@ -137,7 +137,33 @@ fn main() -> i32 {
 }
 ```
 
-Funções são declaradas com `fn`, parâmetros têm nomes e tipos (`nome: tipo`), e o resultado pode vir depois de `->`. `main` é a entrada, não recebe parâmetros e retorna `i32`. Os tipos disponíveis são `i32`, `f64`, `bool` e `string`; booleanos usam a representação WebAssembly `i32`, e strings são armazenadas como UTF-8 na memória do módulo. Variáveis locais usam `let nome: tipo = valor;` e podem ser atualizadas. Inteiros são literais sem ponto decimal; decimais são `f64`. Existem `if`/`else`, `while`, chamadas de função, recursão, atribuição, comentários `//` e `/* ... */`, aritmética, comparações e operadores booleanos `&&` e `||` (com avaliação não short-circuit). Conversões implícitas, concatenação de strings com `+`, arrays, structs, módulos e tipos definidos pelo usuário não estão incluídos; `print("texto", numero)` concatena texto e número somente na saída.
+Funções são declaradas com `fn`, parâmetros têm nomes e tipos (`nome: tipo`), e o resultado pode vir depois de `->`. `main` é a entrada, não recebe parâmetros e retorna `i32`. Os tipos disponíveis são `i32`, `f64`, `bool` e `string`; booleanos usam a representação WebAssembly `i32`, e strings são armazenadas como UTF-8 na memória do módulo. Variáveis locais usam `let nome: tipo = valor;` e podem ser atualizadas. Inteiros são literais sem ponto decimal; decimais são `f64`. Existem `if`/`else`, `while`, chamadas de função, recursão, atribuição, comentários `//` e `/* ... */`, aritmética, comparações e operadores booleanos `&&` e `||` (com avaliação não short-circuit). Conversões implícitas, concatenação de strings com `+`, arrays, structs e tipos definidos pelo usuário ainda não estão incluídos; `print("texto", numero)` concatena texto e número somente na saída.
+
+O compilador aceita módulos nomeados fornecidos explicitamente pelo host. Funções importadas precisam ser exportadas com `export fn`; caminhos são relativos, terminam em `.lume` e só podem resolver para fontes presentes no objeto `modules`:
+
+```lume
+import { somar as soma } from "./matematica.lume";
+fn main() -> i32 { return soma(19, 23); }
+```
+
+```js
+import { instantiate } from "@luizcsbh/lume-language";
+
+const source = `
+import { somar as soma } from "./matematica.lume";
+fn main() -> i32 { return soma(19, 23); }`;
+
+const { instance } = await instantiate(source, {
+  modules: {
+    "matematica.lume": "export fn somar(a: i32, b: i32) -> i32 { return a + b; }",
+  },
+  host: {},
+});
+
+console.log(instance.exports.main()); // 42
+```
+
+O compilador combina os arquivos em um único módulo WASM; não lê arquivos nem busca módulos na rede. Módulos não importados são rejeitados.
 
 ## Interoperabilidade com JavaScript
 

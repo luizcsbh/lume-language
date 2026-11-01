@@ -18,7 +18,7 @@ const BUILTINS = [
 ];
 const TYPES = new Set(["i32", "f64", "bool", "string"]);
 const WASM_TYPE = { i32: 0x7f, f64: 0x7c, bool: 0x7f, string: 0x7f };
-const KEYWORDS = new Set(["fn", "let", "return", "if", "else", "while", "true", "false"]);
+const KEYWORDS = new Set(["fn", "let", "return", "if", "else", "while", "true", "false", "import", "from", "as", "export"]);
 export const MAX_LUME_SOURCE_UNITS = 65_536;
 export const MAX_LUME_PARSE_DEPTH = 128;
 
@@ -29,7 +29,10 @@ export class LumeError extends Error {
     this.line = token.line;
     this.column = token.column;
   }
-  toString() { return `${this.message} (linha ${this.line}, coluna ${this.column})`; }
+  toString() {
+    const module = this.modulePath ? `${this.modulePath}: ` : "";
+    return `${this.message} (${module}linha ${this.line}, coluna ${this.column})`;
+  }
 }
 
 class Lexer {
@@ -149,17 +152,45 @@ class Parser {
     return this.tokens[this.position++];
   }
   parseType() {
-    const token = this.expectName("esperado tipo i32, f64 ou bool");
+    const token = this.expectName("esperado tipo i32, f64, bool ou string");
     if (!TYPES.has(token.value)) throw new LumeError(`tipo “${token.value}” não suportado; use i32, f64, bool ou string`, token);
     return token.value;
   }
   parse() {
     const functions = [];
-    while (this.current().kind !== "eof") functions.push(this.functionDeclaration());
+    const imports = [];
+    let declarationsStarted = false;
+    while (this.current().kind !== "eof") {
+      if (this.match("import")) {
+        if (declarationsStarted) throw new LumeError("imports devem aparecer antes das funções", this.previous());
+        imports.push(this.importDeclaration());
+      } else {
+        declarationsStarted = true;
+        const exported = this.match("export");
+        functions.push(this.functionDeclaration(exported));
+      }
+    }
     if (!functions.length) throw new LumeError("escreva pelo menos uma função, por exemplo fn main() -> i32 { return 0; }");
-    return { functions };
+    return { functions, imports };
   }
-  functionDeclaration() {
+  importDeclaration() {
+    const token = this.previous();
+    this.expect("{", "esperado { depois de import");
+    const names = [];
+    if (this.at("}")) throw new LumeError("informe pelo menos uma função no import", this.current());
+    do {
+      const imported = this.expectName("esperado o nome de uma função importada");
+      const local = this.match("as") ? this.expectName("esperado um alias depois de as") : imported;
+      names.push({ imported: imported.value, local: local.value, token: imported });
+    } while (this.match(","));
+    this.expect("}");
+    this.expect("from", "esperado from depois dos nomes importados");
+    if (this.current().kind !== "string") throw new LumeError("esperado o caminho do módulo entre aspas", this.current());
+    const path = this.tokens[this.position++];
+    this.expect(";", "termine o import com ;");
+    return { path: path.value, names, token };
+  }
+  functionDeclaration(exported = false) {
     this.expect("fn", "cada declaração deve começar com fn");
     const name = this.expectName("esperado o nome da função");
     this.expect("(");
@@ -175,7 +206,7 @@ class Parser {
     let result = "i32";
     if (this.match("->")) result = this.parseType();
     const body = this.block();
-    return { name: name.value, token: name, params, result, body };
+    return { name: name.value, token: name, params, result, body, exported };
   }
   block() {
     const opening = this.expect("{", "esperado um bloco entre chaves");
@@ -295,8 +326,9 @@ function signature(params, result) { return `${params.join(",")}>${result || ""}
 const watType = type => type === "bool" || type === "string" ? "i32" : type;
 
 class FunctionEmitter {
-  constructor(fn, functions, functionIndices, strings) {
+  constructor(fn, functions, functionIndices, strings, functionBindings) {
     this.fn = fn; this.functions = functions; this.functionIndices = functionIndices;
+    this.functionBindings = functionBindings;
     this.strings = strings;
     this.code = []; this.wat = []; this.locals = []; this.scopes = [new Map()];
     fn.params.forEach((param, index) => this.scopes[0].set(param.name, { index, type: param.type, token: param.token }));
@@ -429,7 +461,8 @@ class FunctionEmitter {
       this.emit(0x10, "call $print"); this.code.push(...uleb(functionIndex));
       return null;
     }
-    const target = BUILTINS.find(item => item.name === node.name) || this.functions.get(node.name);
+    const functionName = this.functionBindings.get(node.name) ?? node.name;
+    const target = BUILTINS.find(item => item.name === functionName) || this.functions.get(functionName);
     if (!target) throw new LumeError(`função “${node.name}” não existe`, node.token);
     if (node.args.length !== target.params.length) throw new LumeError(`“${node.name}” espera ${target.params.length} argumento(s), mas recebeu ${node.args.length}`, node.token);
     node.args.forEach((arg, index) => {
@@ -437,8 +470,8 @@ class FunctionEmitter {
       const expected = typeof parameter === "string" ? parameter : parameter.type;
       if (actual !== expected) throw new LumeError(`argumento ${index + 1} de “${node.name}” deve ser ${expected}, não ${actual}`, node.token);
     });
-    const functionIndex = this.functionIndices.get(node.name);
-    this.emit(0x10, `call $${node.name}`); this.code.push(...uleb(functionIndex));
+    const functionIndex = this.functionIndices.get(functionName);
+    this.emit(0x10, `call $${target.wasmName ?? functionName}`); this.code.push(...uleb(functionIndex));
     return target.result;
   }
   compileBinary(node) {
@@ -480,30 +513,165 @@ class StringPool {
   }
 }
 
-function compileProgram(program) {
-  const names = new Set(BUILTINS.map(item => item.name));
-  const functions = new Map();
-  for (const fn of program.functions) {
-    if (names.has(fn.name)) throw new LumeError(`“${fn.name}” é um nome reservado`, fn.token);
-    if (functions.has(fn.name)) throw new LumeError(`função “${fn.name}” declarada mais de uma vez`, fn.token);
-    const paramNames = new Set();
-    for (const param of fn.params) {
-      if (paramNames.has(param.name)) throw new LumeError(`parâmetro “${param.name}” duplicado`, param.token);
-      paramNames.add(param.name);
-    }
-    functions.set(fn.name, fn);
+function normalizeModulePath(path, parent, token) {
+  if (typeof path !== "string" || !path || path.startsWith("/") || path.includes("\\")
+    || path.split("/").some(segment => !segment) || /[:?#]/.test(path)) {
+    throw new LumeError("caminho de módulo inválido; use um caminho relativo terminado em .lume", token);
   }
-  const main = functions.get("main");
+  if (parent && !path.startsWith("./") && !path.startsWith("../")) {
+    throw new LumeError("imports de módulo devem usar um caminho relativo iniciado em ./ ou ../", token);
+  }
+  const segments = parent ? parent.split("/").slice(0, -1) : [];
+  for (const segment of path.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      if (!segments.length) throw new LumeError("o caminho do módulo não pode sair da raiz dos fontes", token);
+      segments.pop();
+    } else {
+      segments.push(segment);
+    }
+  }
+  const normalized = segments.join("/");
+  if (!normalized.endsWith(".lume")) throw new LumeError("caminhos de módulo devem terminar em .lume", token);
+  return normalized;
+}
+
+function moduleError(message, token, moduleId) {
+  const error = new LumeError(message, token);
+  if (moduleId !== "main.lume") error.modulePath = moduleId;
+  return error;
+}
+
+function parseModules(source, options) {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("as opções de compilação devem ser um objeto");
+  }
+  const providedModules = options.modules ?? {};
+  if (providedModules === null || typeof providedModules !== "object" || Array.isArray(providedModules)) {
+    throw new TypeError("a opção modules deve ser um objeto de caminhos .lume para fontes");
+  }
+  const sources = new Map();
+  for (const [path, moduleSource] of Object.entries(providedModules)) {
+    const id = normalizeModulePath(path, null);
+    if (id === "main.lume") throw new LumeError('o caminho "main.lume" é reservado para o programa principal');
+    if (sources.has(id)) throw new LumeError(`o módulo “${id}” foi fornecido mais de uma vez`);
+    if (typeof moduleSource !== "string" || !moduleSource.trim()) throw new LumeError(`o módulo “${id}” está vazio ou não é texto`);
+    sources.set(id, moduleSource);
+  }
+  if (typeof source !== "string" || !source.trim()) throw new LumeError("o editor está vazio; escreva ou escolha um exemplo");
+  const sourceSize = source.length + [...sources.values()].reduce((total, text) => total + text.length, 0);
+  if (sourceSize > MAX_LUME_SOURCE_UNITS) {
+    throw new LumeError(`fontes excedem o limite de ${MAX_LUME_SOURCE_UNITS} unidades de código UTF-16`);
+  }
+
+  const programs = new Map();
+  const visited = new Set();
+  function visit(id, text) {
+    if (visited.has(id)) return;
+    visited.add(id);
+    let program;
+    try {
+      program = new Parser(new Lexer(text).tokenize()).parse();
+    } catch (error) {
+      if (error instanceof LumeError && id !== "main.lume") error.modulePath = id;
+      throw error;
+    }
+    programs.set(id, program);
+    for (const item of program.imports) {
+      let dependency;
+      try {
+        dependency = normalizeModulePath(item.path, id, item.token);
+      } catch (error) {
+        if (error instanceof LumeError && id !== "main.lume") error.modulePath = id;
+        throw error;
+      }
+      const dependencySource = sources.get(dependency);
+      if (dependencySource === undefined) {
+        const error = new LumeError(`o módulo “${dependency}” não foi fornecido na opção modules`, item.token);
+        if (id !== "main.lume") error.modulePath = id;
+        throw error;
+      }
+      item.moduleId = dependency;
+      visit(dependency, dependencySource);
+    }
+  }
+  visit("main.lume", source);
+  for (const id of sources.keys()) {
+    if (!visited.has(id)) throw new LumeError(`o módulo “${id}” foi fornecido, mas não é importado pelo programa`);
+  }
+
+  const modules = [...programs].map(([id, program], index) => ({ id, index, ...program }));
+  const functions = [];
+  const functionsByModule = new Map();
+  for (const module of modules) {
+    const localFunctions = new Map();
+    for (const [functionIndex, fn] of module.functions.entries()) {
+      if (BUILTINS.some(item => item.name === fn.name)) throw moduleError(`“${fn.name}” é um nome reservado`, fn.token, module.id);
+      if (localFunctions.has(fn.name)) throw moduleError(`função “${fn.name}” declarada mais de uma vez no módulo “${module.id}”`, fn.token, module.id);
+      const paramNames = new Set();
+      for (const param of fn.params) {
+        if (paramNames.has(param.name)) throw moduleError(`parâmetro “${param.name}” duplicado`, param.token, module.id);
+        paramNames.add(param.name);
+      }
+      fn.moduleId = module.id;
+      fn.wasmName = `lume_m${module.index}_f${functionIndex}_${fn.name}`;
+      localFunctions.set(fn.name, fn);
+      functions.push(fn);
+    }
+    functionsByModule.set(module.id, localFunctions);
+  }
+
+  const bindingsByFunction = new Map();
+  for (const module of modules) {
+    const bindings = new Map();
+    for (const [name, fn] of functionsByModule.get(module.id)) bindings.set(name, fn.wasmName);
+    for (const item of module.imports) {
+      const dependencyFunctions = functionsByModule.get(item.moduleId);
+      for (const imported of item.names) {
+        if (BUILTINS.some(builtin => builtin.name === imported.local)) {
+          throw moduleError(`“${imported.local}” é um nome reservado e não pode ser usado como alias`, imported.token, module.id);
+        }
+        if (bindings.has(imported.local)) throw moduleError(`nome importado “${imported.local}” já está declarado no módulo “${module.id}”`, imported.token, module.id);
+        const fn = dependencyFunctions.get(imported.imported);
+        if (!fn || !fn.exported) {
+          throw moduleError(`a função “${imported.imported}” não está exportada pelo módulo “${item.moduleId}”`, imported.token, module.id);
+        }
+        bindings.set(imported.local, fn.wasmName);
+      }
+    }
+    for (const fn of module.functions) bindingsByFunction.set(fn, bindings);
+  }
+
+  const rootFunctions = functionsByModule.get("main.lume");
+  const main = rootFunctions.get("main");
   if (!main) throw new LumeError("o programa precisa declarar fn main() -> i32 { ... }");
   if (main.params.length) throw new LumeError("fn main não pode receber parâmetros", main.token);
   if (main.result !== "i32") throw new LumeError("fn main deve retornar i32", main.token);
+  return { functions, rootFunctions: [...rootFunctions.values()], bindingsByFunction };
+}
+
+function compileProgram(program) {
+  const functions = new Map();
+  for (const fn of program.functions) {
+    functions.set(fn.wasmName, fn);
+  }
   const functionIndices = new Map();
   BUILTINS.forEach((item, index) => functionIndices.set(item.name, index));
-  program.functions.forEach((fn, index) => functionIndices.set(fn.name, BUILTINS.length + index));
+  program.functions.forEach((fn, index) => functionIndices.set(fn.wasmName, BUILTINS.length + index));
 
   const strings = new StringPool();
-  const compiled = program.functions.map(fn => ({ fn, output: new FunctionEmitter(fn, functions, functionIndices, strings) }));
-  for (const item of compiled) item.output.compileBlock(item.fn.body, false);
+  const compiled = program.functions.map(fn => ({
+    fn,
+    output: new FunctionEmitter(fn, functions, functionIndices, strings, program.bindingsByFunction.get(fn)),
+  }));
+  for (const item of compiled) {
+    try {
+      item.output.compileBlock(item.fn.body, false);
+    } catch (error) {
+      if (error instanceof LumeError && item.fn.moduleId !== "main.lume") error.modulePath = item.fn.moduleId;
+      throw error;
+    }
+  }
   const bodies = compiled.map(item => item.output.finish());
 
   const types = [], typeIndices = new Map();
@@ -520,7 +688,7 @@ function compileProgram(program) {
   const typeSection = section(1, vector(types.map(type => [0x60, ...vector(type.params.map(param => [WASM_TYPE[param]])), ...vector(type.result ? [[WASM_TYPE[type.result]]] : [])])));
   const importSection = section(2, vector(BUILTINS.map((item, index) => [...wasmName("host"), ...wasmName(item.name), 0x00, ...uleb(importTypeIndices[index])])));
   const functionSection = section(3, vector(functionTypeIndices.map(index => uleb(index))));
-  const exports = program.functions.map((fn, index) => [...wasmName(fn.name), 0x00, ...uleb(BUILTINS.length + index)]);
+  const exports = program.rootFunctions.map(fn => [...wasmName(fn.name), 0x00, ...uleb(functionIndices.get(fn.wasmName))]);
   exports.push([...wasmName("memory"), 0x02, ...uleb(0)]);
   const exportSection = section(7, vector(exports));
   const memoryPages = Math.max(1, Math.ceil(strings.bytes.length / 65_536));
@@ -545,27 +713,22 @@ function compileProgram(program) {
   watLines.push(`  (memory ${memoryPages})`, '  (export "memory" (memory 0))');
   for (let i = 0; i < compiled.length; i++) {
     const fn = compiled[i].fn, body = bodies[i];
-    const params = fn.params.map(param => `(param $l${fn.params.indexOf(param)}_${param.name} ${watType(param.type)})`).join(" ");
+    const params = fn.params.map((param, index) => `(param $l${index}_${param.name} ${watType(param.type)})`).join(" ");
     const result = fn.result ? ` (result ${watType(fn.result)})` : "";
-    watLines.push(`  (func $${fn.name}${params ? ` ${params}` : ""}${result}`);
+    watLines.push(`  (func $${fn.wasmName}${params ? ` ${params}` : ""}${result}`);
     body.locals.forEach((local, index) => watLines.push(`    (local $l${fn.params.length + index}_${local.name} ${watType(local.type)})`));
     body.wat.forEach(instruction => watLines.push(`    ${instruction}`));
     watLines.push("  )");
   }
-  for (const fn of program.functions) watLines.push(`  (export "${fn.name}" (func $${fn.name}))`);
+  for (const fn of program.rootFunctions) watLines.push(`  (export "${fn.name}" (func $${fn.wasmName}))`);
   if (strings.bytes.length) {
     watLines.push(`  (data (i32.const 0) "${strings.bytes.map(byte => `\\${byte.toString(16).padStart(2, "0")}`).join("")}")`);
   }
   watLines.push(")");
-  return { bytes, wat: watLines.join("\n"), functions: program.functions.map(fn => fn.name) };
+  return { bytes, wat: watLines.join("\n"), functions: program.rootFunctions.map(fn => fn.name) };
 }
 
-export function compile(source) {
-  if (typeof source !== "string" || !source.trim()) throw new LumeError("o editor está vazio; escreva ou escolha um exemplo");
-  if (source.length > MAX_LUME_SOURCE_UNITS) {
-    throw new LumeError(`fonte excede o limite de ${MAX_LUME_SOURCE_UNITS} unidades de código UTF-16`);
-  }
-  const tokens = new Lexer(source).tokenize();
-  const program = new Parser(tokens).parse();
+export function compile(source, options = {}) {
+  const program = parseModules(source, options);
   return compileProgram(program);
 }

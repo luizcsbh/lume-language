@@ -1,4 +1,4 @@
-import { compile } from "./compiler.js?v=lume-print-20261101-r2";
+import { compile } from "./compiler.js?v=lume-modules-20261101-r1";
 import { MAX_DOM_OPERATIONS } from "./dom-contract.js?v=lume-dom-20261101-r1";
 import { MemoryRepository } from "./memory-repository.js";
 import { MemoryService } from "./memory-service.js";
@@ -96,9 +96,9 @@ function createImports(memoryService) {
     memory_free(handle) { memoryService.free(new FreeMemoryRequest(handle)); },
   } };
 }
-async function compileSource(source) {
+async function compileSource(source, modules) {
   const start = performance.now();
-  const output = compile(source);
+  const output = compile(source, { modules });
   const module = await WebAssembly.compile(output.bytes);
   compiledModule = module;
   post("compiled", {
@@ -167,7 +167,7 @@ self.onmessage = async event => {
   if (data.type !== "compile" && data.type !== "run") return;
   let phase = data.source !== undefined ? "compilação" : "execução";
   try {
-    if (data.source !== undefined) await compileSource(data.source);
+    if (data.source !== undefined) await compileSource(data.source, data.modules);
     if (data.type === "run") { phase = "execução"; execute(); }
   } catch (error) {
     domQueue = [];

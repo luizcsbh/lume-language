@@ -14,9 +14,9 @@ after(() => {
   else globalThis.self = previousSelf;
 });
 
-async function run(source) {
+async function run(source, modules) {
   messages.length = 0;
-  await workerScope.onmessage({ data: { type: "run", source } });
+  await workerScope.onmessage({ data: { type: "run", source, modules } });
   return [...messages];
 }
 
@@ -35,6 +35,15 @@ test("registra o listener de clique uma única vez e mantém o callback disponí
 test("imprime strings UTF-8 no console pelo Worker", async () => {
   const result = await run('fn main() -> i32 { print_string("Lume: olá\\n"); return 0; }');
   assert.ok(result.some(message => message.type === "output" && message.text === "Lume: olá\n"));
+  assert.equal(result.some(message => message.type === "error"), false);
+});
+
+test("compila e executa imports de módulos no Worker", async () => {
+  const result = await run(
+    'import { answer } from "./answer.lume"; fn main() -> i32 { return answer(); }',
+    { "answer.lume": "export fn answer() -> i32 { return 42; }" },
+  );
+  assert.equal(result.find(message => message.type === "done")?.returnValue, 42);
   assert.equal(result.some(message => message.type === "error"), false);
 });
 
