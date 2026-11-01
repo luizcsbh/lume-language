@@ -68,6 +68,18 @@ fn main() -> i32 {
   assert.equal(result.some(message => message.type === "error"), false);
 });
 
+test("executa o exemplo completo da biblioteca padrão no Worker", async () => {
+  const result = await run(EXAMPLES.stdlib);
+  assert.equal(result.find(message => message.type === "done")?.returnValue, 24);
+  assert.deepEqual(result.filter(message => message.type === "output").map(message => message.text), [
+    "Soma: 24",
+    "Olá, Lume",
+    "Caracteres em Lume: 4",
+    "9",
+  ]);
+  assert.equal(result.some(message => message.type === "error"), false);
+});
+
 test("executa o exemplo visual de arrays e structs no heap do Worker", async () => {
   const result = await run(EXAMPLES.arrays);
   assert.equal(result.find(message => message.type === "done")?.returnValue, 42);

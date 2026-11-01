@@ -200,6 +200,28 @@ import { concat, length, slice } from "std/string.lume";
 
 Esse é um conjunto inicial de módulos, não uma biblioteca padrão abrangente.
 
+O exemplo **Biblioteca padrão** do playground combina esses módulos:
+
+```lume
+import { sum_i32 } from "std/array.lume";
+import { clamp_i32, sqrt_f64 } from "std/math.lume";
+import { concat, length } from "std/string.lume";
+
+fn main() -> i32 {
+  let values: array<i32> = [4, 8, 12];
+  let total: i32 = sum_i32(values);
+  let limited: i32 = clamp_i32(total, 0, 20);
+  let greeting: string = concat("Olá, ", "Lume");
+  print("Soma: ", total);
+  print_string(greeting);
+  print("Caracteres em Lume: ", length("Lume"));
+  print_f64(sqrt_f64(81.0));
+  return limited + length("Lume");
+}
+```
+
+O console mostra `Soma: 24`, `Olá, Lume`, `Caracteres em Lume: 4` e `9`. O programa retorna `24`.
+
 O compilador combina os arquivos importados em um único módulo WASM; não lê arquivos do disco nem busca módulos na rede. Módulos fornecidos mas não importados são rejeitados.
 
 ### Async/await experimental

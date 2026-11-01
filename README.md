@@ -103,6 +103,28 @@ import { concat, length, slice } from "std/string.lume";
 
 This is an initial set of modules, not yet a comprehensive standard library.
 
+The playground's **Standard library** example combines these modules:
+
+```lume
+import { sum_i32 } from "std/array.lume";
+import { clamp_i32, sqrt_f64 } from "std/math.lume";
+import { concat, length } from "std/string.lume";
+
+fn main() -> i32 {
+  let values: array<i32> = [4, 8, 12];
+  let total: i32 = sum_i32(values);
+  let limited: i32 = clamp_i32(total, 0, 20);
+  let greeting: string = concat("Hello, ", "Lume");
+  print("Sum: ", total);
+  print_string(greeting);
+  print("Characters in Lume: ", length("Lume"));
+  print_f64(sqrt_f64(81.0));
+  return limited + length("Lume");
+}
+```
+
+The console prints `Sum: 24`, `Hello, Lume`, `Characters in Lume: 4`, and `9`. The program returns `24`.
+
 ### Experimental async/await
 
 The compiler includes a portable continuation-based async path without JSPI. In this version, `async fn` is supported only on `main`; `await` must be the direct value of a declaration, assignment, or return at the function's top level. Await inside expressions, conditions, loops, nested blocks, or helper functions is explicitly rejected.
