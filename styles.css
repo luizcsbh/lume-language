@@ -90,6 +90,43 @@
 .geo-map .maplibregl-ctrl-group button+button{border-top:1px solid #34392f}
 .geo-map .maplibregl-ctrl-attrib{background:#141713e8;color:#a9ae9f;border-radius:3px 0 0 0;font:9px var(--sans)}
 .geo-map .maplibregl-ctrl-attrib a{color:var(--lime)}
-.user-location-marker{width:26px;height:26px;display:grid;place-items:center;border:1px solid #ffc1c1;border-radius:50%;background:#ff3b303b;box-shadow:0 0 18px #ff3b3066}
-.user-location-marker::before{content:"";width:9px;height:9px;border-radius:50%;background:#ff3b30;box-shadow:0 0 10px #ff3b30}
+.geo-map .maplibregl-popup-content{padding:10px 12px;background:#191c18;color:#f0f1e9}
+.map-location-popup{display:grid;gap:4px;font:12px var(--sans)}
+.map-location-popup span{color:#ffb4ad;font-size:11px}
+.user-location-marker{width:26px;height:26px;display:grid;place-items:center;border:1px solid #fecaca;border-radius:50%;background:radial-gradient(circle at 35% 30%,#ff8a80 0,#ef4444 42%,#991b1b 100%);box-shadow:0 0 0 4px #ef444444,0 0 18px #dc262699}
+.user-location-marker::before{content:"";width:9px;height:9px;border-radius:50%;background:#fff1f2;box-shadow:0 0 0 3px #f87171,0 0 12px #fff}
 @media(max-width:560px){.geo-map .maplibregl-ctrl-attrib{font-size:8px}.geo-map .maplibregl-ctrl-group button{width:29px;height:29px}}
+
+body{font-size:16px}
+.brand-name{font-size:24px}
+.topbar-right{font-size:13px}
+.intro-text{font-size:16px}
+.brand-tag,.eyebrow,.file-label,.status-label,.example-select-label,select{font-size:12px}
+.tiny-wasm,.stage-meta,.input-strip label{font-size:10px}
+.button{font-size:12px}
+.panel-heading h2{font-size:14px}
+.line-numbers,.syntax-layer,#code-editor{font-size:14px}
+.editor-footer,.editor-footer kbd,.footer{font-size:10px}
+.stat-cell strong{font-size:17px}
+.stat-cell small,.footer-brand{font-size:11px}
+.guide-lede{font-size:15px}
+.limits-note p{font-size:12px}
+.geo-lede{font-size:16px}
+.geo-button>span:first-child{font-size:19px}
+.geo-footnote{font-size:12px!important}
+.geo-hero h1{font-size:44px}
+.geo-runtime,.map-status{font-size:10px}
+.geo-control-panel h2{font-size:24px}
+.result-head h2{font-size:13px}
+.geo-how-copy h2{font-size:39px}
+.geo-how-detail>p{font-size:13px}
+.geo-code{font-size:11px}
+.privacy-note p{font-size:11px}
+.geo-map .leaflet-control-attribution{font-size:12px}
+.geo-map .maplibregl-ctrl-attrib{font-size:10px}
+.workbench{grid-template-columns:minmax(0,1fr)}
+.editor-panel{border-right:0;border-bottom:1px solid var(--line)}
+.editor-frame{height:clamp(420px,58vh,680px)}
+.canvas-stage{height:clamp(320px,44vw,560px)}
+.console-output{height:160px}
+@media(max-width:620px){.editor-frame{height:clamp(360px,60vh,560px)}.canvas-stage{height:clamp(280px,72vw,420px)}.console-output{height:140px}}

@@ -23,12 +23,12 @@ Teste este programa mínimo no editor:
 
 ```lume
 fn main() -> i32 {
-  print_i32(42);
+  print("A resposta é ", 42);
   return 0;
 }
 ```
 
-O número `42` aparecerá no console do playground.
+O console do playground mostrará `A resposta é 42`.
 
 ## Como desenvolvedores podem usar o Lume
 
@@ -137,11 +137,11 @@ fn main() -> i32 {
 }
 ```
 
-Funções são declaradas com `fn`, parâmetros têm nomes e tipos (`nome: tipo`), e o resultado pode vir depois de `->`. `main` é a entrada, não recebe parâmetros e retorna `i32`. Os tipos disponíveis são `i32`, `f64` e `bool`; booleanos usam a representação WebAssembly `i32`. Variáveis locais usam `let nome: tipo = valor;` e podem ser atualizadas. Inteiros são literais sem ponto decimal; decimais são `f64`. Existem `if`/`else`, `while`, chamadas de função, recursão, atribuição, comentários `//` e `/* ... */`, aritmética, comparações e operadores booleanos `&&` e `||` (com avaliação não short-circuit). Conversões implícitas, texto/string, arrays, structs, módulos e tipos definidos pelo usuário não estão incluídos.
+Funções são declaradas com `fn`, parâmetros têm nomes e tipos (`nome: tipo`), e o resultado pode vir depois de `->`. `main` é a entrada, não recebe parâmetros e retorna `i32`. Os tipos disponíveis são `i32`, `f64`, `bool` e `string`; booleanos usam a representação WebAssembly `i32`, e strings são armazenadas como UTF-8 na memória do módulo. Variáveis locais usam `let nome: tipo = valor;` e podem ser atualizadas. Inteiros são literais sem ponto decimal; decimais são `f64`. Existem `if`/`else`, `while`, chamadas de função, recursão, atribuição, comentários `//` e `/* ... */`, aritmética, comparações e operadores booleanos `&&` e `||` (com avaliação não short-circuit). Conversões implícitas, concatenação de strings com `+`, arrays, structs, módulos e tipos definidos pelo usuário não estão incluídos; `print("texto", numero)` concatena texto e número somente na saída.
 
 ## Interoperabilidade com JavaScript
 
-As funções de host importadas incluem `print_i32(i32)`, `print_f64(f64)`, Canvas, a API DOM controlada, `read_slider() -> i32`, `listen_click()` e os imports de memória listados abaixo. Elas demonstram a fronteira WASM–JavaScript; os imports visuais são mensagens do Worker que a interface usa para atualizar o DOM e o Canvas. `listen_click()` habilita a chamada ao export WASM opcional `on_click(x: i32, y: i32) -> i32` quando o usuário clica no Canvas.
+As funções de host importadas incluem `print_i32(i32)`, `print_f64(f64)`, `print_string(string)`, `print(string, numero)`, Canvas, a API DOM controlada, `read_slider() -> i32`, `listen_click()` e os imports de memória listados abaixo. Na linguagem, `print` e `print_string` são equivalentes: ambos aceitam `print("texto")` ou `print("texto", numero)`; o número pode ser `i32` ou `f64`, e o texto e a representação do número saem juntos. Para implementar os imports em outra aplicação, o argumento de texto é um ponteiro para bytes UTF-8 na memória exportada `instance.exports.memory`; os quatro bytes anteriores ao ponteiro contêm o comprimento em bytes como inteiro little-endian. Na forma com número, ele chega ao import `print` como `f64`; na forma só com texto, o import `print_string` recebe o ponteiro. No playground, o Worker decodifica o texto e o envia ao console. `listen_click()` habilita a chamada ao export WASM opcional `on_click(x: i32, y: i32) -> i32` quando o usuário clica no Canvas.
 
 ## API DOM controlada
 
@@ -149,15 +149,17 @@ O exemplo **DOM em lote** apresenta três imports tipados: `dom_set_i32(target: 
 
 O Worker acumula os comandos de uma chamada `main` ou de um callback WASM `on_click` e envia um lote de até 4.096 operações, em vez de uma mensagem por operação. O serviço do host valida o lote inteiro antes de mutar qualquer nó, verifica os IDs, capacidades, intervalos i32, valores f64 finitos e bools 0/1 e então aplica as escritas numa única passagem síncrona. Um lote rejeitado na validação não deixa uma parte aplicada. Se a execução/callback lançar erro ou exceder o orçamento, os comandos pendentes são descartados e o listener de cliques é desligado até uma nova execução. A garantia é de validação integral, não uma transação com rollback se uma escrita do próprio DOM falhar inesperadamente. A interface não consulta medidas de layout para executar esses comandos e o texto passa por `textContent`, nunca por `innerHTML`.
 
-O programa não fornece seletores, HTML, atributos, URLs, event listeners ou referências de nós: somente o host registra e disponibiliza os quatro destinos fixos. Isso reduz capacidades e riscos de injeção, mas não transforma Worker ou WebAssembly numa sandbox para executar código hostil. A linguagem não tem strings nesta etapa; por isso esta API só escreve números. Cada chamada continua cruzando a fronteira WASM–JavaScript: o lote reduz as mensagens, mas DOM simples ou intensivo em acessos ainda pode ser mais rápido em JavaScript. A lista de alvos não é uma API de acesso geral a páginas arbitrárias.
+O programa não fornece seletores, HTML, atributos, URLs, event listeners ou referências de nós: somente o host registra e disponibiliza os quatro destinos fixos. Isso reduz capacidades e riscos de injeção, mas não transforma Worker ou WebAssembly numa sandbox para executar código hostil. A API DOM controlada só escreve números; strings estão disponíveis para impressão no console por `print_string`, não para escrita arbitrária no DOM. Cada chamada continua cruzando a fronteira WASM–JavaScript: o lote reduz as mensagens, mas DOM simples ou intensivo em acessos ainda pode ser mais rápido em JavaScript. A lista de alvos não é uma API de acesso geral a páginas arbitrárias.
 
 ## Gerenciamento de memória numérica
 
-O exemplo **Memória por handles** usa `memory_alloc_i32(cells: i32) -> i32`, `memory_load_i32(handle: i32, index: i32) -> i32`, `memory_store_i32(handle: i32, index: i32, value: i32)` e `memory_free(handle: i32)`. O resultado da alocação é um handle opaco, não um endereço nem um ponteiro. Cada leitura/escrita exige um handle ativo e um índice dentro do bloco; valores fora do intervalo `i32`, handles inválidos, índices inválidos e liberações repetidas são rejeitados.
+O exemplo **Memória & threads** usa `memory_alloc_i32(cells: i32) -> i32`, `memory_load_i32(handle: i32, index: i32) -> i32`, `memory_store_i32(handle: i32, index: i32, value: i32)` e `memory_free(handle: i32)`. O resultado da alocação é um handle opaco, não um endereço nem um ponteiro. Cada leitura/escrita exige um handle ativo e um índice dentro do bloco; valores fora do intervalo `i32`, handles inválidos, índices inválidos e liberações repetidas são rejeitados.
 
 O heap é mantido no Worker pelo host em um `Int32Array`, e **não** é a memória linear nativa do módulo WebAssembly. Começa com 64 KiB, cresce sob demanda até 16 MiB e aceita no máximo 16.384 blocos vivos por execução. Alocações novas e liberadas são zeradas; intervalos livres adjacentes são unidos. Quando a fragmentação impede uma alocação, os blocos podem ser compactados: o programa só possui handles estáveis, então não observa posições físicas. O Worker mostra bytes usados/reservados e blocos vivos no console.
 
 O heap é reiniciado a cada execução: é liberado ao final de `main()` quando não há listener de clique; se `listen_click()` o mantiver ativo, dura até a próxima execução, erro ou encerramento do Worker. Esta é uma API experimental somente para células `i32`: ainda não oferece strings, coleções, ponteiros, compartilhamento entre Workers, garbage collector ou acesso geral à memória WASM.
+
+O exemplo **Memória & threads** demonstra alocação, escrita, leitura, reutilização e liberação de um bloco. O Canvas mostra um gráfico de pontos: três pontos representam as três células `i32` alocadas, e um ponto para cada thread de execução compara Lume e JavaScript. Os rótulos e a soma calculada aparecem no console. Lume controla a memória por handles, enquanto o host JavaScript mantém o buffer real. No playground, o programa WASM roda em **um Worker (uma thread de execução)** e o JavaScript da interface permanece na thread principal. Um programa JavaScript síncrono na interface usa uma thread de execução; se precisar manter a interface responsiva com o cálculo isolado, também usa um Worker. Portanto, para esse cenário, Lume não exige mais threads do que JavaScript. O número de threads por si só não indica qual opção será mais rápida.
 
 ## Localização HTML5 processada por Lume
 

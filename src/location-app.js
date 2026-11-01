@@ -20,7 +20,7 @@ try {
   geolocationPolicyAllows = true;
 }
 const supported = isSecureContext && geolocationApiAvailable && geolocationPolicyAllows;
-const worker = new Worker(new URL("./worker.js?v=lume-dom-20261101-r1", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=lume-print-20261101-r2", import.meta.url), { type: "module" });
 let moduleReady = false;
 let moduleFailed = false;
 let requestPending = false;
@@ -36,6 +36,8 @@ let mapErrorShown = false;
 let mapViewGeneration = 0;
 let mapWaitTimer = null;
 let locationMarker = null;
+let locationPopupTitle = null;
+let locationPopupAccuracy = null;
 let pendingMapPosition = null;
 
 function setStatus(text, state = "") {
@@ -157,12 +159,17 @@ function updateMapPosition(position) {
     locationMarker = new mapLibre.Marker({ element: markerElement, anchor: "center" })
       .setLngLat(coordinates)
       .addTo(map);
-    const popupContent = document.createElement("span");
-    popupContent.textContent = `Sua posição · ${quadrant}`;
+    const popupContent = document.createElement("div");
+    popupContent.className = "map-location-popup";
+    locationPopupTitle = document.createElement("strong");
+    locationPopupAccuracy = document.createElement("span");
+    popupContent.append(locationPopupTitle, locationPopupAccuracy);
     locationMarker.setPopup(new mapLibre.Popup({ offset: 18, closeButton: false }).setDOMContent(popupContent));
   } else {
     locationMarker.setLngLat(coordinates);
   }
+  locationPopupTitle.textContent = `Sua posição · ${quadrant}`;
+  locationPopupAccuracy.textContent = accuracyText(accuracy);
 
   if (!mapLoaded) return;
   const sourceId = "lume-position-accuracy";
@@ -175,13 +182,13 @@ function updateMapPosition(position) {
       id: "lume-position-accuracy-fill",
       type: "fill",
       source: sourceId,
-      paint: { "fill-color": "#c5f36b", "fill-opacity": 0.13 },
+      paint: { "fill-color": "#ef4444", "fill-opacity": 0.18 },
     });
     map.addLayer({
       id: "lume-position-accuracy-outline",
       type: "line",
       source: sourceId,
-      paint: { "line-color": "#c5f36b", "line-width": 1.5, "line-opacity": 0.78 },
+      paint: { "line-color": "#b91c1c", "line-width": 2, "line-opacity": 0.9 },
     });
   }
   map.getSource(sourceId).setData(accuracyFeature(latitude, longitude, accuracy));

@@ -32,6 +32,18 @@ test("registra o listener de clique uma única vez e mantém o callback disponí
   assert.equal(result.some(message => message.type === "error"), false);
 });
 
+test("imprime strings UTF-8 no console pelo Worker", async () => {
+  const result = await run('fn main() -> i32 { print_string("Lume: olá\\n"); return 0; }');
+  assert.ok(result.some(message => message.type === "output" && message.text === "Lume: olá\n"));
+  assert.equal(result.some(message => message.type === "error"), false);
+});
+
+test("print concatena texto com números inteiros e decimais em uma linha", async () => {
+  const result = await run('fn main() -> i32 { print("contagem=", -12); print_string("contagem=", -12); print("razão=", 2.5); print_string("razão=", 2.5); return 0; }');
+  assert.deepEqual(result.filter(message => message.type === "output").map(message => message.text), ["contagem=-12", "contagem=-12", "razão=2.5", "razão=2.5"]);
+  assert.equal(result.some(message => message.type === "error"), false);
+});
+
 test("contabiliza listen_click no teto de efeitos mesmo quando a notificação é idempotente", async () => {
   const source = `${clickFunction}\nfn main() -> i32 { let i: i32 = 0; while i < 5000 { listen_click(); i = i + 1; } return 0; }`;
   const result = await run(source);

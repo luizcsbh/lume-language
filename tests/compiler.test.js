@@ -8,7 +8,7 @@ function instantiate(source, host) {
   const output = compile(source);
   assert.equal(WebAssembly.validate(output.bytes), true, "o compilador deve gerar um módulo WASM válido");
   const defaultHost = {
-    print_i32() {}, print_f64() {}, canvas_clear() {}, canvas_dot() {}, dom_value() {},
+    print_i32() {}, print_f64() {}, print_string() {}, print() {}, canvas_clear() {}, canvas_dot() {}, dom_value() {},
     dom_set_i32() {}, dom_set_f64() {}, dom_set_visible() {}, read_slider() { return 0; }, listen_click() {},
     memory_alloc_i32() { return 1; }, memory_load_i32() { return 0; }, memory_store_i32() {}, memory_free() {},
   };
@@ -19,16 +19,32 @@ test("API pública do pacote executa o exemplo Hello World com imports explícit
   const source = EXAMPLES.hello;
   const compiled = compilePackage(source);
   const printed = [];
-  const { instance, output } = await instantiatePackage(
+  let instance;
+  const result = await instantiatePackage(
     source,
-    { host: { print_i32(value) { printed.push(value); } } },
+    { host: {
+      print_string(pointer) {
+        const memory = instance.exports.memory;
+        const address = pointer >>> 0;
+        const length = new DataView(memory.buffer).getUint32(address - 4, true);
+        printed.push(new TextDecoder().decode(new Uint8Array(memory.buffer, address, length)));
+      },
+      print(pointer, value) {
+        const memory = instance.exports.memory;
+        const address = pointer >>> 0;
+        const length = new DataView(memory.buffer).getUint32(address - 4, true);
+        printed.push(`${new TextDecoder().decode(new Uint8Array(memory.buffer, address, length))}${value}`);
+      },
+    } },
   );
+  instance = result.instance;
 
   assert.equal(instance.exports.main(), 0);
-  assert.deepEqual(printed, [42]);
-  assert.equal(WebAssembly.validate(output.bytes), true);
+  assert.deepEqual(printed, ["A resposta é 42"]);
+  assert.equal(WebAssembly.validate(result.output.bytes), true);
   assert.equal(WebAssembly.validate(compiled.bytes), true);
   assert.match(compiled.wat, /export "main"/);
+  assert.match(compiled.wat, /import "host" "print" \(func \$print \(param i32\) \(param f64\)\)/);
 });
 
 test("API pública falha explicitamente quando um import chamado não foi fornecido", async () => {
@@ -65,6 +81,51 @@ test("compila chamadas recursivas, if, i32, f64 e retorno", () => {
   assert.equal(instance.exports.main(), 6765);
   assert.deepEqual(integers, [6765]);
   assert.equal(decimals[0], 6.28);
+});
+
+test("imprime strings UTF-8 com escapes, variáveis e parâmetros", () => {
+  const printed = [];
+  let instance;
+  const output = compile("fn echo(text: string) -> string { return text; }\nfn main() -> i32 { let message: string = echo(\"Olá,\\nLume\\0!\"); print_string(message); print_string(\"\"); return 0; }");
+  assert.equal(WebAssembly.validate(output.bytes), true);
+  instance = instantiate("fn echo(text: string) -> string { return text; }\nfn main() -> i32 { let message: string = echo(\"Olá,\\nLume\\0!\"); print_string(message); print_string(\"\"); return 0; }", {
+    print_string(pointer) {
+      const memory = instance.exports.memory;
+      const address = pointer >>> 0;
+      const length = new DataView(memory.buffer).getUint32(address - 4, true);
+      printed.push(new TextDecoder().decode(new Uint8Array(memory.buffer, address, length)));
+    },
+  }).instance;
+  instance.exports.main();
+  assert.deepEqual(printed, ["Olá,\nLume\0!", ""]);
+  assert.throws(() => compile('fn main() -> i32 { print_string("\\q"); return 0; }'), /sequência de escape inválida/);
+  assert.throws(() => compile('fn main() -> i32 { print_string("ab); return 0; }'), /texto entre aspas não foi fechado/);
+});
+
+test("print e print_string imprimem texto com ou sem números i32 e f64", () => {
+  const printed = [];
+  let instance;
+  const source = 'fn main() -> i32 { let count: i32 = -42; let ratio: f64 = 3.5; print("count=", count); print_string("count=", count); print("ratio=", ratio); print_string("ratio=", ratio); print("texto"); print_string("texto"); return 0; }';
+  const decodeOutput = (pointer, value) => {
+    const memory = instance.exports.memory;
+    const address = pointer >>> 0;
+    const length = new DataView(memory.buffer).getUint32(address - 4, true);
+    const text = new TextDecoder().decode(new Uint8Array(memory.buffer, address, length));
+    printed.push(`${text}${value === undefined ? "" : Number(value).toString()}`);
+  };
+  const { output, instance: wasmInstance } = instantiate(source, {
+    print: decodeOutput,
+    print_string: decodeOutput,
+  });
+  instance = wasmInstance;
+  assert.equal(WebAssembly.validate(output.bytes), true);
+  instance.exports.main();
+  assert.deepEqual(printed, ["count=-42", "count=-42", "ratio=3.5", "ratio=3.5", "texto", "texto"]);
+  assert.match(output.wat, /f64\.convert_i32_s/);
+  assert.throws(() => compile('fn main() -> i32 { print("count=", 1, 2); return 0; }'), /“print” espera um texto, com um número opcional/);
+  assert.throws(() => compile('fn main() -> i32 { print_string("count=", 1, 2); return 0; }'), /“print_string” espera um texto, com um número opcional/);
+  assert.throws(() => compile('fn main() -> i32 { print("count=", true); return 0; }'), /o segundo argumento de “print” deve ser i32 ou f64/);
+  assert.throws(() => compile('fn main() -> i32 { print_string(42); return 0; }'), /o argumento de “print_string” deve ser string/);
 });
 
 test("expõe callback WASM para eventos de clique do navegador", () => {

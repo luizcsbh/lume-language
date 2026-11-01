@@ -25,7 +25,7 @@ function serviceFor(repository = new MemoryRepository()) {
 }
 
 const wasmDefaults = {
-  print_i32() {}, print_f64() {}, canvas_clear() {}, canvas_dot() {}, dom_value() {},
+  print_i32() {}, print_f64() {}, print_string() {}, print() {}, canvas_clear() {}, canvas_dot() {}, dom_value() {},
   dom_set_i32() {}, dom_set_f64() {}, dom_set_visible() {}, read_slider() { return 0; }, listen_click() {},
 };
 
@@ -96,13 +96,35 @@ test("rejeita tipos de requisição que não foram criados pelo módulo confiáv
 test("compila e executa o exemplo Lume de alocar, armazenar, ler e liberar i32", () => {
   const { service, host } = serviceFor();
   const printed = [];
+  const dots = [];
   const output = compile(EXAMPLES.memory);
   assert.equal(WebAssembly.validate(output.bytes), true);
-  const instance = new WebAssembly.Instance(new WebAssembly.Module(output.bytes), {
-    host: { ...wasmDefaults, ...host, print_i32(value) { printed.push(value); } },
+  let instance;
+  instance = new WebAssembly.Instance(new WebAssembly.Module(output.bytes), {
+    host: {
+      ...wasmDefaults,
+      ...host,
+      print(pointer, value) {
+        const address = pointer >>> 0;
+        const length = new DataView(instance.exports.memory.buffer).getUint32(address - 4, true);
+        const text = new TextDecoder().decode(new Uint8Array(instance.exports.memory.buffer, address, length));
+        printed.push(`${text}${value}`);
+      },
+      canvas_dot(x, y, radius) { dots.push([x, y, radius]); },
+    },
   });
   assert.equal(instance.exports.main(), 42);
-  assert.deepEqual(printed, [42]);
+  assert.deepEqual(printed, [
+    "Memória (células i32): 3",
+    "Lume (threads): 1",
+    "JavaScript (threads): 1",
+    "Soma guardada no heap: 42",
+  ]);
+  assert.deepEqual(dots, [
+    [80, 100, 9], [106, 100, 9], [132, 100, 9],
+    [80, 180, 9],
+    [80, 260, 9],
+  ]);
   assert.equal(service.stats().usedBytes, 0, "o exemplo libera o bloco após uso");
   service.close();
 });

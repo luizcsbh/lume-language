@@ -1,4 +1,4 @@
-import { compile } from "./compiler.js?v=lume-memory-20261101-r1";
+import { compile } from "./compiler.js?v=lume-print-20261101-r2";
 import { MAX_DOM_OPERATIONS } from "./dom-contract.js?v=lume-dom-20261101-r1";
 import { MemoryRepository } from "./memory-repository.js";
 import { MemoryService } from "./memory-service.js";
@@ -32,6 +32,16 @@ function consumeHostEffect() {
     throw new RangeError(`execução excedeu o limite de ${MAX_HOST_EFFECTS} efeitos do host por chamada`);
   }
 }
+function decodeString(pointer) {
+  const memory = activeInstance?.exports?.memory;
+  if (!(memory instanceof WebAssembly.Memory)) throw new Error("a memória WASM não está disponível para imprimir texto");
+  const address = pointer >>> 0;
+  if (address < 4) throw new RangeError("ponteiro de texto inválido");
+  const view = new DataView(memory.buffer);
+  const length = view.getUint32(address - 4, true);
+  if (address + length > memory.buffer.byteLength) throw new RangeError("texto fora dos limites da memória WASM");
+  return new TextDecoder().decode(new Uint8Array(memory.buffer, address, length));
+}
 function queueDom(operation) {
   consumeHostEffect();
   if (domQueue.length >= MAX_DOM_OPERATIONS) {
@@ -49,6 +59,8 @@ function createImports(memoryService) {
   return { host: {
     print_i32(value) { consumeHostEffect(); post("output", { text: String(value | 0) }); },
     print_f64(value) { consumeHostEffect(); post("output", { text: Number(value).toString() }); },
+    print_string(pointer) { consumeHostEffect(); post("output", { text: decodeString(pointer) }); },
+    print(pointer, value) { consumeHostEffect(); post("output", { text: `${decodeString(pointer)}${Number(value).toString()}` }); },
     canvas_clear() { consumeHostEffect(); post("canvas-clear"); },
     canvas_dot(x, y, radius) {
       consumeHostEffect();

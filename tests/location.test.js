@@ -4,7 +4,7 @@ import { compile } from "../src/compiler.js";
 import { LOCATION_PROGRAM } from "../src/location-program.js";
 
 const host = {
-  print_i32() {}, print_f64() {}, canvas_clear() {}, canvas_dot() {},
+  print_i32() {}, print_f64() {}, print_string() {}, print() {}, canvas_clear() {}, canvas_dot() {},
   dom_value() {}, dom_set_i32() {}, dom_set_f64() {}, dom_set_visible() {},
   read_slider() { return 0; }, listen_click() {},
   memory_alloc_i32() { return 1; }, memory_load_i32() { return 0; }, memory_store_i32() {}, memory_free() {},

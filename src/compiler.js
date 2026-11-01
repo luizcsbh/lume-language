@@ -1,6 +1,8 @@
 const BUILTINS = [
   { name: "print_i32", params: ["i32"], result: null },
   { name: "print_f64", params: ["f64"], result: null },
+  { name: "print_string", params: ["string"], result: null },
+  { name: "print", params: ["string", "f64"], result: null },
   { name: "canvas_clear", params: [], result: null },
   { name: "canvas_dot", params: ["i32", "i32", "i32"], result: null },
   { name: "dom_value", params: ["i32"], result: null },
@@ -14,8 +16,8 @@ const BUILTINS = [
   { name: "memory_store_i32", params: ["i32", "i32", "i32"], result: null },
   { name: "memory_free", params: ["i32"], result: null },
 ];
-const TYPES = new Set(["i32", "f64", "bool"]);
-const WASM_TYPE = { i32: 0x7f, f64: 0x7c, bool: 0x7f };
+const TYPES = new Set(["i32", "f64", "bool", "string"]);
+const WASM_TYPE = { i32: 0x7f, f64: 0x7c, bool: 0x7f, string: 0x7f };
 const KEYWORDS = new Set(["fn", "let", "return", "if", "else", "while", "true", "false"]);
 export const MAX_LUME_SOURCE_UNITS = 65_536;
 export const MAX_LUME_PARSE_DEPTH = 128;
@@ -39,6 +41,34 @@ class Lexer {
     return char;
   }
   add(kind, value, line, column) { this.tokens.push({ kind, value, line, column }); }
+  string(line, column, quote) {
+    this.advance();
+    let value = "";
+    while (this.index < this.source.length) {
+      const char = this.peek();
+      if (char === quote) {
+        this.advance();
+        this.add("string", value, line, column);
+        return;
+      }
+      if (char === "\n" || char === "\r") {
+        throw new LumeError("texto entre aspas não foi fechado", { line, column });
+      }
+      if (char !== "\\") {
+        value += this.advance();
+        continue;
+      }
+      this.advance();
+      const escaped = this.peek();
+      const escapes = { "0": "\0", "'": "'", '"': '"', "\\": "\\", n: "\n", r: "\r", t: "\t" };
+      if (!Object.hasOwn(escapes, escaped)) {
+        throw new LumeError(`sequência de escape inválida “\\${escaped}”`, { line: this.line, column: this.column });
+      }
+      this.advance();
+      value += escapes[escaped];
+    }
+    throw new LumeError("texto entre aspas não foi fechado", { line, column });
+  }
   tokenize() {
     while (this.index < this.source.length) {
       const char = this.peek();
@@ -88,7 +118,7 @@ class Lexer {
       if ("+-*/%<>=!(){}:;,".includes(char)) {
         this.advance(); this.add("symbol", char, line, column); continue;
       }
-      if (char === '"' || char === "'") throw new LumeError("textos entre aspas ainda não fazem parte do subconjunto Lume", { line, column });
+      if (char === '"' || char === "'") { this.string(line, column, char); continue; }
       throw new LumeError(`caractere inesperado “${char}”`, { line, column });
     }
     this.tokens.push({ kind: "eof", value: "<fim>", line: this.line, column: this.column });
@@ -120,7 +150,7 @@ class Parser {
   }
   parseType() {
     const token = this.expectName("esperado tipo i32, f64 ou bool");
-    if (!TYPES.has(token.value)) throw new LumeError(`tipo “${token.value}” não suportado; use i32, f64 ou bool`, token);
+    if (!TYPES.has(token.value)) throw new LumeError(`tipo “${token.value}” não suportado; use i32, f64, bool ou string`, token);
     return token.value;
   }
   parse() {
@@ -223,6 +253,10 @@ class Parser {
       if (!Number.isFinite(value)) throw new LumeError("literal numérico fora do intervalo", token);
       return { kind: "number", value, type: /[.eE]/.test(token.value) ? "f64" : "i32", token };
     }
+    if (token.kind === "string") {
+      this.position++;
+      return { kind: "string", value: token.value, token };
+    }
     if (this.match("true")) return { kind: "bool", value: 1, type: "bool", token };
     if (this.match("false")) return { kind: "bool", value: 0, type: "bool", token };
     if (token.kind === "identifier") {
@@ -258,11 +292,12 @@ function vector(items) { return [...uleb(items.length), ...items.flat()]; }
 function wasmName(name) { const bytes = [...new TextEncoder().encode(name)]; return [...uleb(bytes.length), ...bytes]; }
 function section(id, payload) { return [id, ...uleb(payload.length), ...payload]; }
 function signature(params, result) { return `${params.join(",")}>${result || ""}`; }
-const watType = type => type === "bool" ? "i32" : type;
+const watType = type => type === "bool" || type === "string" ? "i32" : type;
 
 class FunctionEmitter {
-  constructor(fn, functions, functionIndices) {
+  constructor(fn, functions, functionIndices, strings) {
     this.fn = fn; this.functions = functions; this.functionIndices = functionIndices;
+    this.strings = strings;
     this.code = []; this.wat = []; this.locals = []; this.scopes = [new Map()];
     fn.params.forEach((param, index) => this.scopes[0].set(param.name, { index, type: param.type, token: param.token }));
     this.paramCount = fn.params.length;
@@ -347,6 +382,7 @@ class FunctionEmitter {
   compileExpression(node) {
     switch (node.kind) {
       case "number": this.constant(node.type, node.value); return node.type;
+      case "string": this.constant("i32", this.strings.intern(node.value)); return "string";
       case "bool": this.constant("i32", node.value); return "bool";
       case "variable": {
         const variable = this.lookup(node.name, node.token);
@@ -373,6 +409,26 @@ class FunctionEmitter {
     }
   }
   compileCall(node) {
+    if (node.name === "print" || node.name === "print_string") {
+      if (node.args.length === 1) {
+        const textType = this.compileExpression(node.args[0]);
+        if (textType !== "string") throw new LumeError(`o argumento de “${node.name}” deve ser string, não ${textType}`, node.token);
+        const functionIndex = this.functionIndices.get("print_string");
+        this.emit(0x10, "call $print_string"); this.code.push(...uleb(functionIndex));
+        return null;
+      }
+      if (node.args.length !== 2) throw new LumeError(`“${node.name}” espera um texto, com um número opcional`, node.token);
+      const textType = this.compileExpression(node.args[0]);
+      if (textType !== "string") throw new LumeError(`o primeiro argumento de “${node.name}” deve ser string, não ${textType}`, node.token);
+      const numberType = this.compileExpression(node.args[1]);
+      if (numberType !== "i32" && numberType !== "f64") {
+        throw new LumeError(`o segundo argumento de “${node.name}” deve ser i32 ou f64, não ${numberType}`, node.token);
+      }
+      if (numberType === "i32") this.emit(0xb7, "f64.convert_i32_s");
+      const functionIndex = this.functionIndices.get("print");
+      this.emit(0x10, "call $print"); this.code.push(...uleb(functionIndex));
+      return null;
+    }
     const target = BUILTINS.find(item => item.name === node.name) || this.functions.get(node.name);
     if (!target) throw new LumeError(`função “${node.name}” não existe`, node.token);
     if (node.args.length !== target.params.length) throw new LumeError(`“${node.name}” espera ${target.params.length} argumento(s), mas recebeu ${node.args.length}`, node.token);
@@ -411,6 +467,19 @@ class FunctionEmitter {
   }
 }
 
+class StringPool {
+  constructor() { this.bytes = []; this.pointers = new Map(); }
+  intern(value) {
+    if (this.pointers.has(value)) return this.pointers.get(value);
+    const encoded = [...new TextEncoder().encode(value)];
+    const pointer = this.bytes.length + 4;
+    const length = encoded.length;
+    this.bytes.push(length & 0xff, (length >>> 8) & 0xff, (length >>> 16) & 0xff, (length >>> 24) & 0xff, ...encoded);
+    this.pointers.set(value, pointer);
+    return pointer;
+  }
+}
+
 function compileProgram(program) {
   const names = new Set(BUILTINS.map(item => item.name));
   const functions = new Map();
@@ -432,7 +501,8 @@ function compileProgram(program) {
   BUILTINS.forEach((item, index) => functionIndices.set(item.name, index));
   program.functions.forEach((fn, index) => functionIndices.set(fn.name, BUILTINS.length + index));
 
-  const compiled = program.functions.map(fn => ({ fn, output: new FunctionEmitter(fn, functions, functionIndices) }));
+  const strings = new StringPool();
+  const compiled = program.functions.map(fn => ({ fn, output: new FunctionEmitter(fn, functions, functionIndices, strings) }));
   for (const item of compiled) item.output.compileBlock(item.fn.body, false);
   const bodies = compiled.map(item => item.output.finish());
 
@@ -451,21 +521,28 @@ function compileProgram(program) {
   const importSection = section(2, vector(BUILTINS.map((item, index) => [...wasmName("host"), ...wasmName(item.name), 0x00, ...uleb(importTypeIndices[index])])));
   const functionSection = section(3, vector(functionTypeIndices.map(index => uleb(index))));
   const exports = program.functions.map((fn, index) => [...wasmName(fn.name), 0x00, ...uleb(BUILTINS.length + index)]);
+  exports.push([...wasmName("memory"), 0x02, ...uleb(0)]);
   const exportSection = section(7, vector(exports));
+  const memoryPages = Math.max(1, Math.ceil(strings.bytes.length / 65_536));
+  const memorySection = section(5, [0x01, 0x00, ...uleb(memoryPages)]);
   const codeSection = section(10, vector(bodies.map(body => {
     const groups = body.locals.map(local => [1, WASM_TYPE[local.type]]);
     const localBytes = vector(groups);
     const content = [...localBytes, ...body.code];
     return [...uleb(content.length), ...content];
   })));
-  const bytes = new Uint8Array([0x00,0x61,0x73,0x6d, 0x01,0x00,0x00,0x00, ...typeSection, ...importSection, ...functionSection, ...exportSection, ...codeSection]);
+  const dataSection = strings.bytes.length
+    ? section(11, [0x01, 0x00, 0x41, 0x00, 0x0b, ...uleb(strings.bytes.length), ...strings.bytes])
+    : [];
+  const bytes = new Uint8Array([0x00,0x61,0x73,0x6d, 0x01,0x00,0x00,0x00, ...typeSection, ...importSection, ...functionSection, ...memorySection, ...exportSection, ...codeSection, ...dataSection]);
 
   const watLines = ["(module"];
   for (const item of BUILTINS) {
-    const params = item.params.map(type => `(param ${type})`).join(" ");
-    const result = item.result ? ` (result ${item.result})` : "";
+    const params = item.params.map(type => `(param ${watType(type)})`).join(" ");
+    const result = item.result ? ` (result ${watType(item.result)})` : "";
     watLines.push(`  (import "host" "${item.name}" (func $${item.name}${params ? ` ${params}` : ""}${result}))`);
   }
+  watLines.push(`  (memory ${memoryPages})`, '  (export "memory" (memory 0))');
   for (let i = 0; i < compiled.length; i++) {
     const fn = compiled[i].fn, body = bodies[i];
     const params = fn.params.map(param => `(param $l${fn.params.indexOf(param)}_${param.name} ${watType(param.type)})`).join(" ");
@@ -476,6 +553,9 @@ function compileProgram(program) {
     watLines.push("  )");
   }
   for (const fn of program.functions) watLines.push(`  (export "${fn.name}" (func $${fn.name}))`);
+  if (strings.bytes.length) {
+    watLines.push(`  (data (i32.const 0) "${strings.bytes.map(byte => `\\${byte.toString(16).padStart(2, "0")}`).join("")}")`);
+  }
   watLines.push(")");
   return { bytes, wat: watLines.join("\n"), functions: program.functions.map(fn => fn.name) };
 }

@@ -1,4 +1,4 @@
-import { EXAMPLES } from "./examples.js?v=lume-memory-20261101-r1";
+import { EXAMPLES } from "./examples.js?v=lume-print-20261101-r2";
 import { DOMRepository } from "./dom-repository.js?v=lume-dom-20261101-r1";
 import { DOMService } from "./dom-service.js?v=lume-dom-20261101-r1";
 
@@ -23,14 +23,14 @@ function escapeHtml(text) {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 function highlight(source) {
-  const tokenPattern = /(\/\/[^\n]*|\b(?:fn|let|return|if|else|while|true|false)\b|\b(?:i32|f64|bool)\b|\b(?:print_i32|print_f64|canvas_clear|canvas_dot|dom_value|dom_set_i32|dom_set_f64|dom_set_visible|read_slider|listen_click|memory_alloc_i32|memory_load_i32|memory_store_i32|memory_free)\b(?=\s*\()|\b[A-Za-z_]\w*(?=\s*\()|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b|"[^"\n]*"|'[^'\n]*')/g;
+  const tokenPattern = /(\/\/[^\n]*|\b(?:fn|let|return|if|else|while|true|false)\b|\b(?:i32|f64|bool|string)\b|\b(?:print|print_i32|print_f64|print_string|canvas_clear|canvas_dot|dom_value|dom_set_i32|dom_set_f64|dom_set_visible|read_slider|listen_click|memory_alloc_i32|memory_load_i32|memory_store_i32|memory_free)\b(?=\s*\()|\b[A-Za-z_]\w*(?=\s*\()|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')/g;
   const renderToken = token => {
     let kind = "";
     if (token.startsWith("//")) kind = "comment";
     else if (token.startsWith('"') || token.startsWith("'")) kind = "string";
     else if (/^(fn|let|return|if|else|while|true|false)$/.test(token)) kind = "keyword";
-    else if (/^(i32|f64|bool)$/.test(token)) kind = "type";
-    else if (/^(print_i32|print_f64|canvas_clear|canvas_dot|dom_value|dom_set_i32|dom_set_f64|dom_set_visible|read_slider|listen_click|memory_alloc_i32|memory_load_i32|memory_store_i32|memory_free)$/.test(token)) kind = "builtin";
+    else if (/^(i32|f64|bool|string)$/.test(token)) kind = "type";
+    else if (/^(print|print_i32|print_f64|print_string|canvas_clear|canvas_dot|dom_value|dom_set_i32|dom_set_f64|dom_set_visible|read_slider|listen_click|memory_alloc_i32|memory_load_i32|memory_store_i32|memory_free)$/.test(token)) kind = "builtin";
     else if (/^\d/.test(token)) kind = "number";
     else kind = "function";
     return `<span class="token-${kind}">${escapeHtml(token)}</span>`;
@@ -110,7 +110,7 @@ function stopWorker(showMessage = true) {
 }
 function newWorker(action, source) {
   if (worker) worker.terminate();
-  worker = new Worker(new URL("./worker.js?v=lume-memory-20261101-r1", import.meta.url), { type: "module" });
+  worker = new Worker(new URL("./worker.js?v=lume-print-20261101-r2", import.meta.url), { type: "module" });
   pendingSource = source;
   pointerReady = false;
   clickEnabled = false;
