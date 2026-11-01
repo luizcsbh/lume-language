@@ -16,7 +16,7 @@ function instantiate(source, host) {
 }
 
 test("API pública do pacote executa o exemplo Hello World com imports explícitos", async () => {
-  const source = "fn main() -> i32 { print_i32(42); return 0; }";
+  const source = EXAMPLES.hello;
   const compiled = compilePackage(source);
   const printed = [];
   const { instance, output } = await instantiatePackage(

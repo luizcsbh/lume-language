@@ -6,7 +6,7 @@
   "homepage": "https://luizcsbh.github.io/lume-language/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/luizcsbh/lume-language.git"
+    "url": "git+https://github.com/luizcsbh/lume-language.git"
   },
   "publishConfig": {
     "access": "public"
