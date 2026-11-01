@@ -129,7 +129,7 @@ body{font-size:16px}
 .editor-panel{border-right:1px solid var(--line);border-bottom:0}
 .editor-frame{height:clamp(420px,58vh,680px)}
 .canvas-stage{height:clamp(320px,32vw,500px)}
-.playground-layout>.console-wrap{margin:12px 11px 16px}
+.playground-layout>.console-wrap{display:flex;flex-direction:column;min-height:0;margin:12px 11px 16px}
 .playground-layout>.inspector{border-top:0;border-left:1px solid var(--line);padding:14px 18px 0}
-.console-output{height:160px}
-@media(max-width:760px){.playground-layout{grid-template-columns:minmax(0,1fr)}.editor-panel{border-right:0;border-bottom:1px solid var(--line)}.playground-layout>.console-wrap{margin:12px 11px 16px}.playground-layout>.inspector{border-left:0;border-top:1px solid var(--line);padding:14px 12px 0}.editor-frame{height:clamp(360px,60vh,560px)}.canvas-stage{height:clamp(280px,72vw,420px)}.console-output{height:140px}}
+.console-output{flex:1;min-height:160px;height:auto;overflow-y:auto}
+@media(max-width:760px){.playground-layout{grid-template-columns:minmax(0,1fr)}.editor-panel{border-right:0;border-bottom:1px solid var(--line)}.playground-layout>.console-wrap{margin:12px 11px 16px}.playground-layout>.inspector{border-left:0;border-top:1px solid var(--line);padding:14px 12px 0}.editor-frame{height:clamp(360px,60vh,560px)}.canvas-stage{height:clamp(280px,72vw,420px)}.console-output{min-height:140px}}
